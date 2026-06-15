@@ -1,0 +1,53 @@
+name: Snapshot Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Enter the branch name for snapshot release
+        required: true
+        default: main
+        type: string
+
+env:
+  CI: true
+
+jobs:
+  version:
+    timeout-minutes: 15
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Checkout code repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.branch }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build snapshot package
+        run: |
+          SNAPSHOT_VERSION="$(node -p "const p = require('./package.json'); p.version.replace(/-.*/, '') + '-snapshot.' + process.env.GITHUB_RUN_ID")"
+          npm version "$SNAPSHOT_VERSION" --no-git-tag-version
+          bun run build
+
+      - name: Publish snapshot package
+        run: npm publish --tag snapshot --access public
+        env:
+          NPM_CONFIG_PROVENANCE: true
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

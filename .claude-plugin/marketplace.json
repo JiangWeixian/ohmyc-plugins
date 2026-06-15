@@ -1,0 +1,21 @@
+{
+  "name": "ohmyc",
+  "description": "OhMyC official plugin marketplace",
+  "owner": {
+    "name": "JiangWeixian",
+    "email": "jiangweixian1994@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "timeline",
+      "source": "./",
+      "description": "Auto-collects Claude Code session data for Timeline dashboard",
+      "version": "1.0.5",
+      "author": {
+        "name": "JiangWeixian"
+      },
+      "homepage": "https://github.com/JiangWeixian/ohmyc-plugins",
+      "license": "MIT"
+    }
+  ]
+}

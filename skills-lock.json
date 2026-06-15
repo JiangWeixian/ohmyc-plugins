@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "skills": {
+    "changeset": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "90ea3e2fdbf1738eecc25f3ac3be460939c0332affbc5a70a952aa63cba20b50"
+    },
+    "ci": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "12c25930c9380783a9afc4d2f8e35486ada6f74ab506f25ce6cda2f461441227"
+    },
+    "codemermaid": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "bee756b105fa656a5eb3933858d461885ad93e1f6bd321a072a66f408a4b3a90"
+    },
+    "create-mr": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "21be5e770b60319a7ac9749d1765d5ccfe1e4473ae2f880ed96c9719100d73e9"
+    },
+    "docs-code": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "e66f5e79434fdfe0d8e5319cb98329be0f168b9ecd3f6e7b7a582179eb1aa4f7"
+    },
+    "fast-commit": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "5e3066e4340bbb09a15568723de16a3577c81e1ffc692d5a0959726d39b2e181"
+    },
+    "fire": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "8abc615aa472175122b48c5b5685cc6365caaa109353190d888b2d2e33bf5b07"
+    },
+    "request-plan-review": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "acf5733ac57d245476b4e225a44ff0282cbd42cd9e677bfc4444c475590a9ed8"
+    },
+    "write-docs": {
+      "source": "git@github.com:neo-hack/supermario.git",
+      "sourceType": "git",
+      "computedHash": "f3e12e4dc39e60b2cc2b8d7e9c39247a6f49980794d294e233ae812109ddad38"
+    }
+  }
+}

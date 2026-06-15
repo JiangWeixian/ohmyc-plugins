@@ -1,0 +1,37 @@
+{
+  "name": "@ohmyc/timeline-plugin",
+  "version": "1.0.5",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "files": [
+    ".agents",
+    ".claude-plugin",
+    ".codex-plugin",
+    "dist",
+    "hooks",
+    "README.md"
+  ],
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsup && bun build opencode.ts --outfile dist/index.js --target bun --external @opencode-ai/plugin",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "^1.14.31"
+  },
+  "dependencies": {
+    "@ohmyc/timeline": "0.0.0-snapshot-20260614095355",
+    "cac": "^6.7.14"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.14.31",
+    "@types/node": "^22.13.0",
+    "@vitest/coverage-v8": "^3.2.4",
+    "tsup": "^8.0.2",
+    "typescript": "^5.4.5",
+    "vitest": "^3.2.4"
+  }
+}

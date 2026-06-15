@@ -1,0 +1,29 @@
+{
+  "name": "timeline",
+  "version": "1.0.5",
+  "description": "Auto-collects Claude Code, OpenCode, and Codex session data for the OhMyC Timeline dashboard.",
+  "author": {
+    "name": "JiangWeixian",
+    "email": "jiangweixian1994@gmail.com"
+  },
+  "homepage": "https://github.com/JiangWeixian/ohmyc-plugins",
+  "repository": "https://github.com/JiangWeixian/ohmyc-plugins",
+  "license": "MIT",
+  "keywords": [
+    "timeline",
+    "analytics",
+    "session-tracking",
+    "codex",
+    "claude-code",
+    "opencode"
+  ],
+  "interface": {
+    "displayName": "OhMyC Timeline",
+    "shortDescription": "Session analytics for OhMyC",
+    "longDescription": "Collects session data from Claude Code, OpenCode, and Codex agents and writes it to the shared Timeline SQLite database.",
+    "developerName": "JiangWeixian",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "defaultPrompt": ["Show my recent Claude Code, OpenCode, and Codex session activity."]
+  }
+}
