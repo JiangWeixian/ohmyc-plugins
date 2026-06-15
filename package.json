@@ -17,7 +17,11 @@
   "scripts": {
     "build": "tsup && bun build opencode.ts --outfile dist/index.js --target bun --external @opencode-ai/plugin",
     "test": "vitest run",
-    "test:coverage": "vitest run --coverage"
+    "test:coverage": "vitest run --coverage",
+    "ci:version": "changeset version",
+    "ci:publish": "bun run build && changeset publish",
+    "ci:snapshot": "changeset version --snapshot snapshot",
+    "ci:prerelease": "bun run build && changeset publish --no-git-tag --tag snapshot"
   },
   "peerDependencies": {
     "@opencode-ai/plugin": "^1.14.31"
@@ -27,6 +31,7 @@
     "cac": "^6.7.14"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.27.12",
     "@opencode-ai/plugin": "^1.14.31",
     "@types/node": "^22.13.0",
     "@vitest/coverage-v8": "^3.2.4",
