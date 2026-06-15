@@ -1,12 +1,14 @@
 // OpenCode plugin for OhMyC Timeline — captures session lifecycle
 // events (turns, tokens, tools, skills) and writes them to a shared
 // SQLite database at ~/.config/ohmyc/timeline.db.
-import { appendFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import { closeDatabase, createWriter, openDatabase } from '@ohmyc/timeline'
-import type { NodeSqliteDatabase } from '@ohmyc/timeline'
+import { Database } from 'bun:sqlite'
+
+import { createWriter } from '@ohmyc/timeline'
+import { CURRENT_SCHEMA_VERSION, SCHEMA_SQL } from '@ohmyc/timeline'
 
 import type { Plugin } from '@opencode-ai/plugin'
 import type { ParsedSessionData } from '@ohmyc/timeline/ingest'
@@ -20,6 +22,39 @@ function log(level: string, message: string, extra?: Record<string, unknown>): v
   } catch {
     console.log(entry)
   }
+}
+
+function getDbPath(): string {
+  const home = process.env.OHMYC_HOME || path.join(os.homedir(), '.config', 'ohmyc')
+  return path.join(home, 'timeline.db')
+}
+
+function ensureDb(): Database {
+  const dbPath = getDbPath()
+  mkdirSync(path.dirname(dbPath), { recursive: true })
+  const db = new Database(dbPath)
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA foreign_keys = ON')
+  ensureSchema(db)
+  return db
+}
+
+function ensureSchema(db: Database): void {
+  // Inline migration: if the sessions table already exists, check
+  // whether it has the agent_name column (added in schema v3) and
+  // add it if missing. This avoids a separate migration framework.
+  const hasSessions = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").get()
+  if (hasSessions) {
+    const hasAgentName = db.query('PRAGMA table_info(sessions)').all()
+      .some((col: any) => col.name === 'agent_name')
+    if (!hasAgentName) {
+      db.exec('ALTER TABLE sessions ADD COLUMN agent_name TEXT;')
+    }
+    return
+  }
+
+  db.exec(SCHEMA_SQL)
+  db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('schema_version', String(CURRENT_SCHEMA_VERSION))
 }
 
 // Mutable state accumulated across events for a single session.
@@ -307,13 +342,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
 export const TimelinePlugin: Plugin = async (input) => {
   const project = getProjectName(input)
 
-  let db: NodeSqliteDatabase | undefined
+  let db: Database | undefined
   let writer: ReturnType<typeof createWriter> | undefined
 
   try {
-    db = openDatabase()
+    db = ensureDb()
     writer = createWriter(db)
   } catch (error) {
+    // Return empty hooks on DB failure — the plugin is non-essential and
+    // should not crash the OpenCode host process.
     log('error', 'Database init failed', { error: error instanceof Error ? error.message : String(error) })
     return {}
   }

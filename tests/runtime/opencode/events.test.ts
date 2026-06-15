@@ -21,10 +21,8 @@ import {
   userMessageUpdatedEvent,
 } from '../../fixtures/events'
 
-vi.mock('@ohmyc/timeline', () => ({
-  openDatabase: vi.fn(),
-  closeDatabase: vi.fn(),
-  createWriter: vi.fn(),
+vi.mock('bun:sqlite', () => ({
+  Database: vi.fn(),
 }))
 
 describe('createAccumulator', () => {
