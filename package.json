@@ -9,6 +9,7 @@
     ".agents",
     ".claude-plugin",
     ".codex-plugin",
+    "assets",
     "dist",
     "hooks",
     "README.md"

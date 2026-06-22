@@ -1,6 +1,6 @@
 {
   "name": "timeline",
-  "version": "1.0.5",
+  "version": "1.0.5+codex.20260620130738",
   "description": "Auto-collects Claude Code, OpenCode, and Codex session data for the OhMyC Timeline dashboard.",
   "author": {
     "name": "JiangWeixian",
@@ -23,7 +23,14 @@
     "longDescription": "Collects session data from Claude Code, OpenCode, and Codex agents and writes it to the shared Timeline SQLite database.",
     "developerName": "JiangWeixian",
     "category": "Productivity",
-    "capabilities": ["Read"],
-    "defaultPrompt": ["Show my recent Claude Code, OpenCode, and Codex session activity."]
+    "capabilities": [
+      "Read"
+    ],
+    "defaultPrompt": [
+      "Show my recent Claude Code, OpenCode, and Codex session activity."
+    ],
+    "brandColor": "#111111",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png"
   }
 }
