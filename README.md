@@ -43,13 +43,6 @@ Claude Code installs plugins from marketplaces. Add this repository's marketplac
 /plugin install timeline@ohmyc
 ```
 
-For a local checkout, run Claude Code from this repository and add the local marketplace instead:
-
-```text
-/plugin marketplace add .
-/plugin install timeline@ohmyc
-```
-
 Official Claude Code plugin docs: <https://code.claude.com/docs/en/discover-plugins>
 
 ### Codex
@@ -67,12 +60,6 @@ codex
 /plugins
 ```
 
-For local testing, point Codex at the checkout:
-
-```bash
-codex plugin marketplace add "$(pwd)"
-```
-
 Official Codex plugin docs: <https://developers.openai.com/codex/plugins>
 
 ### OpenCode
@@ -86,16 +73,7 @@ OpenCode can load plugins from npm packages or local plugin files. If you use th
 }
 ```
 
-For local testing from this checkout, build the plugin and copy the OpenCode bundle into your project plugin directory:
-
-```bash
-bun install --frozen-lockfile
-bun run build
-mkdir -p .opencode/plugins
-cp dist/index.js .opencode/plugins/timeline.js
-```
-
-OpenCode loads files from `.opencode/plugins/` at startup. The plugin records session lifecycle, message, and tool events through the hooks exported by `opencode.ts`.
+The plugin records session lifecycle, message, and tool events through OpenCode hooks.
 
 Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
 
@@ -109,7 +87,7 @@ Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
 
 ## Contributing
 
-For local setup, build commands, tests, commit style, and pull request expectations, see [CONTRIBUTING.md](CONTRIBUTING.md).
+For local setup, agent testing from a checkout, build commands, tests, commit style, and pull request expectations, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Shared Output
 
