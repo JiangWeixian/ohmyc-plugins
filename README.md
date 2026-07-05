@@ -50,12 +50,6 @@ For a local checkout, run Claude Code from this repository and add the local mar
 /plugin install timeline@ohmyc
 ```
 
-The installed Stop hook calls:
-
-```bash
-${CLAUDE_PLUGIN_ROOT}/hooks/ingest-claude.sh $CLAUDE_SESSION_ID
-```
-
 Official Claude Code plugin docs: <https://code.claude.com/docs/en/discover-plugins>
 
 ### Codex
@@ -77,12 +71,6 @@ For local testing, point Codex at the checkout:
 
 ```bash
 codex plugin marketplace add "$(pwd)"
-```
-
-The installed Stop hook calls:
-
-```bash
-${PLUGIN_ROOT}/hooks/ingest-codex.sh
 ```
 
 Official Codex plugin docs: <https://developers.openai.com/codex/plugins>
@@ -122,41 +110,6 @@ Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
 ## Contributing
 
 For local setup, build commands, tests, commit style, and pull request expectations, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Runtime Details
-
-### Claude Code
-
-Claude Code reads `.claude-plugin/plugin.json` and `hooks/hooks.json`. The shared Stop hook dispatches Claude sessions to:
-
-```bash
-${CLAUDE_PLUGIN_ROOT}/hooks/ingest-claude.sh $CLAUDE_SESSION_ID
-```
-
-`ingest-claude.sh` searches `~/.claude/projects/` for the matching transcript and uses the Claude jq fast path when jq is available. If jq is unavailable or the fast path fails, the bundled Node entry at `dist/ingest.mjs` parses the transcript with `--agent-name claude`.
-
-### Codex
-
-Codex discovers the plugin from `.codex-plugin/plugin.json`. Codex plugin lifecycle hooks use the default `hooks/hooks.json`; the shared Stop hook dispatches Codex sessions to:
-
-```bash
-${PLUGIN_ROOT}/hooks/ingest-codex.sh
-```
-
-`ingest-codex.sh` reads Codex hook input from stdin. It accepts `transcript_path` directly, or searches `~/.codex/sessions/` and `~/.codex/archived_sessions/` by `session_id`. It uses a Codex-specific jq fast path when jq is available, and falls back to the bundled Node parser with `--agent-name codex`; both paths emit the same `ParsedSessionData` shape.
-
-### Node Hook Runtime
-
-The Claude and Codex hook runtime requires Node 22+ and uses Node's built-in `node:sqlite` module. The plugin does not require `better-sqlite3` or a system `sqlite3` command.
-
-### OpenCode
-
-The OpenCode plugin lives at `opencode.ts` and sets `agentName='opencode'`. It hooks into:
-
-- `session.created`, `session.idle`, and `session.deleted`
-- `message.updated`
-- `message.part.updated`
-- `tool.execute.before` and `tool.execute.after`
 
 ## Shared Output
 

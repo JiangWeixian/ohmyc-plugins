@@ -52,3 +52,12 @@ available, test results, and screenshots only for visible asset or UI changes.
 `dist/ingest.mjs` and `dist/index.js` are install-time runtime files. Keep them
 available for Git-backed Codex installs and confirm they appear in package
 output before release.
+
+- Claude Code and Codex hooks depend on `dist/ingest.mjs`; OpenCode depends on
+  `dist/index.js`.
+- Keep Claude and Codex transcript parsing in `src/ingest.ts`; keep OpenCode
+  event handling in `opencode.ts`.
+- Preserve the `jq` fast path and Node fallback behavior when changing
+  `hooks/ingest-claude.sh` or `hooks/ingest-codex.sh`.
+- Packaging changes should update `tests/config/plugin.test.ts` and verify
+  `npm pack --dry-run --json`.
