@@ -119,15 +119,9 @@ Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
 | `AGENT_HOME` | environment variable | `~/.claude` | `/tmp/.claude` | Claude transcript root used by `ingest-claude.sh`. |
 | `CODEX_HOME` | environment variable | `~/.codex` | `/tmp/.codex` | Codex session root used by `ingest-codex.sh`. |
 
-## Development
+## Contributing
 
-```bash
-bun install --frozen-lockfile
-bun run build
-bun run test
-```
-
-Use `bun run test:coverage` for the same Vitest coverage command that CI runs. Do not use `bun test`; this repository's tests are configured for Vitest in Node.
+For local setup, build commands, tests, commit style, and pull request expectations, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Runtime Details
 
