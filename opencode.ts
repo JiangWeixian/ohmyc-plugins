@@ -185,6 +185,7 @@ interface SessionAccumulator {
   legacySkills: Set<string>
   dirty: boolean
   persisted: boolean
+  checkpointPending: boolean
   hydrated: boolean
 }
 
@@ -223,6 +224,7 @@ export function createAccumulator(sessionId: string, project = 'unknown'): Sessi
     legacySkills: new Set(),
     dirty: false,
     persisted: false,
+    checkpointPending: false,
     hydrated: false,
   }
 }
@@ -340,12 +342,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
   }
 
   async function checkpoint(acc: SessionAccumulator): Promise<boolean> {
+    acc.checkpointPending = true
     if (!canCheckpoint(acc)) return false
     acc.endedAt = Date.now()
     try {
       deps.writer.writeSession(toParsedSessionData(acc))
       acc.persisted = true
       acc.dirty = false
+      acc.checkpointPending = false
       return true
     } catch (error) {
       acc.dirty = true
@@ -605,6 +609,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
     for (const skill of source.legacySkills) target.legacySkills.add(skill)
     target.dirty ||= source.dirty
     target.persisted ||= source.persisted
+    target.checkpointPending ||= source.checkpointPending
   }
 
   function clearSessionTombstones(acc: SessionAccumulator, sessionID: string): void {
@@ -747,12 +752,17 @@ export function createEventHandler(deps: EventHandlerDeps) {
             case 'session.created':
             case 'session.updated': {
               const info = event.properties?.info
-              if (isChild(sessionID)) break
-              const titleChanged = info?.title !== undefined
-                && String(info.title) !== acc.title
-                && !isDefaultSessionTitle(String(info.title))
-              if (info) applyRootMetadata(acc, info, 'live')
-              if (event.type === 'session.updated' && acc.persisted && titleChanged) {
+              let titleChanged = false
+              if (!isChild(sessionID)) {
+                titleChanged = info?.title !== undefined
+                  && String(info.title) !== acc.title
+                  && !isDefaultSessionTitle(String(info.title))
+                if (info) applyRootMetadata(acc, info, 'live')
+              }
+              if (event.type === 'session.updated' && (
+                acc.checkpointPending
+                || (acc.persisted && titleChanged)
+              )) {
                 await checkpoint(acc)
               }
               break
@@ -762,6 +772,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
               // Subagent state is already merged into the root accumulator.
               // Keep the mapping because the child can resume after idle.
               if (isChild(sessionID)) {
+                if (acc.dirty || acc.checkpointPending) await checkpoint(acc)
                 return
               }
               await checkpoint(acc)
@@ -789,6 +800,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
             case 'session.error': {
               if (isChild(sessionID)) {
+                if (acc.dirty || acc.checkpointPending) await checkpoint(acc)
                 return
               }
               await checkpoint(acc)

@@ -712,6 +712,53 @@ describe('createEventHandler', () => {
     expect(mockWriter.writeSession.mock.calls.every(([data]) => data.sessionId === 'test-session-001')).toBe(true)
   })
 
+  it.each(['session.idle', 'session.error'])(
+    'checkpoints the root when a resumed child emits %s',
+    async (type) => {
+      const { handler } = createHandler()
+      await handler({ event: sessionCreatedEvent })
+      await handler({ event: childSessionCreatedEvent })
+      await handler({ event: sessionIdleEvent })
+
+      await handler({ event: {
+        type: 'message.updated',
+        properties: {
+          sessionID: 'child-session-001',
+          info: {
+            id: 'child-user-after-root-idle',
+            sessionID: 'child-session-001',
+            role: 'user',
+            time: { created: 1_720_000_001_000 },
+          },
+        },
+      } })
+      await handler({ event: {
+        type: 'message.updated',
+        properties: {
+          sessionID: 'child-session-001',
+          info: {
+            id: 'child-assistant-after-root-idle',
+            sessionID: 'child-session-001',
+            role: 'assistant',
+            time: { created: 1_720_000_001_100 },
+            tokens: { input: 25, output: 3, cache: { read: 0, write: 0 } },
+          },
+        },
+      } })
+      await handler({ event: {
+        type,
+        properties: { sessionID: 'child-session-001' },
+      } })
+
+      expect(mockWriter.writeSession).toHaveBeenCalledTimes(2)
+      expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+        sessionId: 'test-session-001',
+        turns: 1,
+        tokensInput: 25,
+      })
+    },
+  )
+
   it('removes child routing when its root is deleted', async () => {
     const { childToParent, handler } = createHandler()
     await handler({ event: sessionCreatedEvent })
@@ -940,6 +987,41 @@ describe('createEventHandler', () => {
 
     expect(mockWriter.writeSession).toHaveBeenCalledTimes(2)
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBe(1)
+  })
+
+  it('retries a failed idle write when a generated title arrives', async () => {
+    mockWriter.writeSession.mockImplementationOnce(() => { throw new Error('locked') })
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
+    await handler({ event: sessionTitleUpdatedEvent })
+
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(2)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      sessionId: 'test-session-001',
+      summary: 'Fix token accounting',
+      turns: 1,
+    })
+  })
+
+  it('retries a pending idle checkpoint after hydration succeeds on a title event', async () => {
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValueOnce(hydratedTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: sessionIdleEvent })
+    await handler({ event: sessionTitleUpdatedEvent })
+
+    expect(loadSessionTree).toHaveBeenCalledTimes(2)
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
+    expect(mockWriter.writeSession.mock.calls[0][0]).toMatchObject({
+      sessionId: 'test-session-001',
+      summary: 'Fix token accounting',
+      turns: 2,
+      tokensInput: 200,
+    })
   })
 
   it('writes an untitled empty session and retains it in memory on idle', async () => {

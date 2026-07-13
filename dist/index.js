@@ -199,6 +199,7 @@ function createAccumulator(sessionId, project = "unknown") {
     legacySkills: new Set,
     dirty: false,
     persisted: false,
+    checkpointPending: false,
     hydrated: false
   };
 }
@@ -282,6 +283,7 @@ function createEventHandler(deps) {
     return true;
   }
   async function checkpoint(acc) {
+    acc.checkpointPending = true;
     if (!canCheckpoint(acc))
       return false;
     acc.endedAt = Date.now();
@@ -289,6 +291,7 @@ function createEventHandler(deps) {
       deps.writer.writeSession(toParsedSessionData(acc));
       acc.persisted = true;
       acc.dirty = false;
+      acc.checkpointPending = false;
       return true;
     } catch (error) {
       acc.dirty = true;
@@ -514,6 +517,7 @@ function createEventHandler(deps) {
       target.legacySkills.add(skill);
     target.dirty ||= source.dirty;
     target.persisted ||= source.persisted;
+    target.checkpointPending ||= source.checkpointPending;
   }
   function clearSessionTombstones(acc, sessionID) {
     const prefix = `${sessionID}:`;
@@ -644,18 +648,21 @@ function createEventHandler(deps) {
             case "session.created":
             case "session.updated": {
               const info = event.properties?.info;
-              if (isChild(sessionID))
-                break;
-              const titleChanged = info?.title !== undefined && String(info.title) !== acc.title && !isDefaultSessionTitle(String(info.title));
-              if (info)
-                applyRootMetadata(acc, info, "live");
-              if (event.type === "session.updated" && acc.persisted && titleChanged) {
+              let titleChanged = false;
+              if (!isChild(sessionID)) {
+                titleChanged = info?.title !== undefined && String(info.title) !== acc.title && !isDefaultSessionTitle(String(info.title));
+                if (info)
+                  applyRootMetadata(acc, info, "live");
+              }
+              if (event.type === "session.updated" && (acc.checkpointPending || acc.persisted && titleChanged)) {
                 await checkpoint(acc);
               }
               break;
             }
             case "session.idle": {
               if (isChild(sessionID)) {
+                if (acc.dirty || acc.checkpointPending)
+                  await checkpoint(acc);
                 return;
               }
               await checkpoint(acc);
@@ -682,6 +689,8 @@ function createEventHandler(deps) {
             }
             case "session.error": {
               if (isChild(sessionID)) {
+                if (acc.dirty || acc.checkpointPending)
+                  await checkpoint(acc);
                 return;
               }
               await checkpoint(acc);
