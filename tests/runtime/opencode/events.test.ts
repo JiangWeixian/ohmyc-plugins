@@ -11,6 +11,7 @@ import {
 import { createAccumulator, createEventHandler } from '../../../opencode'
 import {
   assistantMessageUpdatedEvent,
+  assistantMessageUpdatedEvent2,
   messagePartUpdatedEvent,
   nestedAssistantMessageUpdatedEvent,
   ignoredMessagePartEvent,
@@ -21,6 +22,7 @@ import {
   sessionTitleUpdatedEvent,
   syntheticMessagePartEvent,
   userMessageUpdatedEvent,
+  userMessageUpdatedEvent2,
 } from '../../fixtures/events'
 
 vi.mock('bun:sqlite', () => ({
@@ -188,7 +190,79 @@ describe('createEventHandler', () => {
     })
   })
 
-  it('writes an untitled empty session and removes it from memory on idle', async () => {
+  it('keeps cumulative state across two idle checkpoints', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: assistantMessageUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
+
+    await handler({ event: userMessageUpdatedEvent2 })
+    await handler({ event: assistantMessageUpdatedEvent2 })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      turns: 2,
+      tokensInput: 20_000,
+      tokensOutput: 31,
+    })
+  })
+
+  it('serializes fire-and-forget events before idle', async () => {
+    const { handler, dispose } = createHandler()
+    void handler({ event: sessionCreatedEvent })
+    void handler({ event: userMessageUpdatedEvent })
+    void handler({ event: assistantMessageUpdatedEvent })
+    void handler({ event: sessionIdleEvent })
+
+    await dispose()
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      turns: 1,
+      tokensInput: 17_473,
+    })
+  })
+
+  it('removes deleted messages from the next checkpoint', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({
+      event: {
+        type: 'message.removed',
+        properties: { sessionID: 'test-session-001', messageID: 'msg-user-001' },
+      },
+    })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBe(0)
+  })
+
+  it('rewrites a persisted checkpoint when a generated title arrives late', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: messagePartUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
+    await handler({ event: sessionTitleUpdatedEvent })
+
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(2)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].summary).toBe('Fix token accounting')
+  })
+
+  it('retains dirty state and retries after a writer failure', async () => {
+    mockWriter.writeSession.mockImplementationOnce(() => { throw new Error('locked') })
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(2)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBe(1)
+  })
+
+  it('writes an untitled empty session and retains it in memory on idle', async () => {
     const { handler, sessions } = createHandler()
     await handler({ event: sessionCreatedEvent })
     await handler({ event: sessionIdleEvent })
@@ -198,7 +272,7 @@ describe('createEventHandler', () => {
       summary: '(untitled session)',
       summarySource: 'auto',
     })
-    expect(sessions.has('test-session-001')).toBe(false)
+    expect(sessions.has('test-session-001')).toBe(true)
   })
 
   it('writes and removes a session when deleted', async () => {

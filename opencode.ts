@@ -85,7 +85,7 @@ interface ToolCallSnapshot {
 }
 
 // Mutable state accumulated across events for a single session.
-// Converted to ParsedSessionData and flushed to SQLite on session.idle.
+// Converted to ParsedSessionData and checkpointed on lifecycle events.
 interface SessionAccumulator {
   sessionId: string
   project: string
@@ -213,6 +213,31 @@ export function createEventHandler(deps: EventHandlerDeps) {
   // Maps subagent sessionID → parent sessionID. Populated from
   // session.created events where info.parentID is present.
   const childToParent = new Map<string, string>()
+  const queues = new Map<string, Promise<void>>()
+
+  function enqueue(rootId: string, work: () => Promise<void>): Promise<void> {
+    const previous = queues.get(rootId) ?? Promise.resolve()
+    const current = previous.catch(() => undefined).then(work)
+    queues.set(rootId, current)
+    return current.finally(() => {
+      if (queues.get(rootId) === current) queues.delete(rootId)
+    })
+  }
+
+  async function checkpoint(acc: SessionAccumulator): Promise<void> {
+    acc.endedAt = Date.now()
+    try {
+      deps.writer.writeSession(toParsedSessionData(acc))
+      acc.persisted = true
+      acc.dirty = false
+    } catch (error) {
+      acc.dirty = true
+      deps.log('error', 'Failed to write OpenCode checkpoint', {
+        sessionID: acc.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
 
   // Resolves a sessionID to its root parent accumulator. Subagent
   // sessions are transparently redirected so their tools, tokens and
@@ -237,13 +262,19 @@ export function createEventHandler(deps: EventHandlerDeps) {
     sessions,
     childToParent,
 
-    handler: async ({ event }: { event: any }) => {
-      try {
-        switch (event.type) {
-          case 'session.created':
-          case 'session.updated': {
-            const sessionID = getEventSessionID(event)
-            if (sessionID) {
+    handler: ({ event }: { event: any }) => {
+      const sessionID = getEventSessionID(event)
+      if (!sessionID) return Promise.resolve()
+
+      const rootId = childToParent.get(sessionID)
+        ?? (event.type === 'session.created' ? event.properties?.info?.parentID as string | undefined : undefined)
+        ?? sessionID
+
+      return enqueue(rootId, async () => {
+        try {
+          switch (event.type) {
+            case 'session.created':
+            case 'session.updated': {
               const parentID = event.type === 'session.created'
                 ? event.properties?.info?.parentID as string | undefined
                 : undefined
@@ -253,18 +284,21 @@ export function createEventHandler(deps: EventHandlerDeps) {
               }
               const acc = getAccumulator(sessionID)
               const info = event.properties?.info
+              const titleChanged = info?.title !== undefined
+                && String(info.title) !== acc.title
+                && !isDefaultSessionTitle(String(info.title))
               if (info?.title !== undefined) acc.title = String(info.title)
               if (info?.time?.created !== undefined) acc.startedAt = Number(info.time.created)
               if (info?.time?.updated !== undefined) acc.endedAt = Number(info.time.updated)
               if (info?.model?.id) acc.sessionModel = String(info.model.id)
               acc.dirty = true
+              if (event.type === 'session.updated' && acc.persisted && titleChanged) {
+                await checkpoint(acc)
+              }
+              break
             }
-            break
-          }
 
-          case 'session.idle': {
-            const sessionID = getEventSessionID(event)
-            if (sessionID) {
+            case 'session.idle': {
               // Subagent idle: merge is already done (getAccumulator
               // redirected to parent). Just clean up the mapping.
               if (isChild(sessionID)) {
@@ -272,105 +306,104 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 return
               }
               const acc = sessions.get(sessionID)
-              if (!acc) {
-                return
-              }
-              acc.endedAt = Date.now()
-              const data = toParsedSessionData(acc)
-              try {
-                deps.writer.writeSession(data)
-                sessions.delete(sessionID)
-              } catch (writeError) {
-                deps.log('error', 'Failed to write session on idle', {
-                  sessionID,
-                  error: writeError instanceof Error ? writeError.message : String(writeError),
-                })
-              }
+              if (acc) await checkpoint(acc)
+              break
             }
-            break
-          }
 
-          case 'session.deleted': {
-            const sessionID = getEventSessionID(event)
-            if (sessionID) {
+            case 'session.deleted': {
               if (isChild(sessionID)) {
                 childToParent.delete(sessionID)
                 return
               }
               const acc = sessions.get(sessionID)
               if (acc) {
-                acc.endedAt = Date.now()
-                deps.writer.writeSession(toParsedSessionData(acc))
-                sessions.delete(sessionID)
+                await checkpoint(acc)
+                if (!acc.dirty) sessions.delete(sessionID)
               }
+              break
             }
-            break
-          }
 
-          case 'session.error': {
-            const sessionID = getEventSessionID(event)
-            if (sessionID) {
+            case 'session.error': {
               if (isChild(sessionID)) {
                 childToParent.delete(sessionID)
                 return
               }
               const acc = sessions.get(sessionID)
-              if (acc) {
-                acc.endedAt = Date.now()
-                deps.writer.writeSession(toParsedSessionData(acc))
-              }
+              if (acc) await checkpoint(acc)
+              break
             }
-            break
-          }
 
-          case 'message.updated': {
-            // OpenCode sends message metadata under either .info or
-            // .message depending on the event variant — accept both.
-            const info = event.properties?.info || event.properties?.message
-            const sessionID = getEventSessionID(event)
-            if (info && sessionID && (info.role === 'user' || info.role === 'assistant') && info.id !== undefined) {
-              const cache = info.tokens?.cache
-              const snapshot: MessageSnapshot = {
-                sessionId: sessionID,
-                messageId: String(info.id),
-                role: info.role,
-                createdAt: Number(info.time?.created ?? Date.now()),
-                model: info.modelID ? String(info.modelID) : null,
-                tokens: {
-                  input: Number(info.tokens?.input ?? 0),
-                  output: Number(info.tokens?.output ?? 0),
-                  cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
-                },
+            case 'message.updated': {
+              // OpenCode sends message metadata under either .info or
+              // .message depending on the event variant — accept both.
+              const info = event.properties?.info || event.properties?.message
+              if (info && (info.role === 'user' || info.role === 'assistant') && info.id !== undefined) {
+                const cache = info.tokens?.cache
+                const snapshot: MessageSnapshot = {
+                  sessionId: sessionID,
+                  messageId: String(info.id),
+                  role: info.role,
+                  createdAt: Number(info.time?.created ?? Date.now()),
+                  model: info.modelID ? String(info.modelID) : null,
+                  tokens: {
+                    input: Number(info.tokens?.input ?? 0),
+                    output: Number(info.tokens?.output ?? 0),
+                    cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
+                  },
+                }
+                const acc = getAccumulator(sessionID)
+                acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
+                acc.dirty = true
               }
-              const acc = getAccumulator(sessionID)
-              acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
-              acc.dirty = true
+              break
             }
-            break
-          }
 
-          case 'message.part.updated': {
-            const part = event.properties?.part
-            const sessionID = getEventSessionID(event)
-            if (part && part.type === 'text' && sessionID && part.id !== undefined && part.messageID !== undefined) {
-              const snapshot: TextPartSnapshot = {
-                sessionId: sessionID,
-                partId: String(part.id),
-                messageId: String(part.messageID),
-                text: String(part.text ?? ''),
-                synthetic: Boolean(part.synthetic),
-                ignored: Boolean(part.ignored),
+            case 'message.part.updated': {
+              const part = event.properties?.part
+              if (part && part.type === 'text' && part.id !== undefined && part.messageID !== undefined) {
+                const snapshot: TextPartSnapshot = {
+                  sessionId: sessionID,
+                  partId: String(part.id),
+                  messageId: String(part.messageID),
+                  text: String(part.text ?? ''),
+                  synthetic: Boolean(part.synthetic),
+                  ignored: Boolean(part.ignored),
+                }
+                const acc = getAccumulator(sessionID)
+                acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
+                acc.dirty = true
               }
-              const acc = getAccumulator(sessionID)
-              acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
-              acc.dirty = true
+              break
             }
-            break
+
+            case 'message.removed': {
+              const messageID = event.properties?.messageID
+              if (messageID === undefined) break
+
+              const acc = getAccumulator(sessionID)
+              const normalizedMessageID = String(messageID)
+              let removed = acc.messages.delete(keyed(sessionID, normalizedMessageID))
+              for (const [partKey, part] of acc.textParts) {
+                if (part.sessionId === sessionID && part.messageId === normalizedMessageID) {
+                  acc.textParts.delete(partKey)
+                  removed = true
+                }
+              }
+              for (const [callKey, call] of acc.toolCalls) {
+                if (call.sessionId === sessionID && call.messageId === normalizedMessageID) {
+                  acc.toolCalls.delete(callKey)
+                  if (call.partId) acc.toolPartIndex.delete(keyed(sessionID, call.partId))
+                  removed = true
+                }
+              }
+              if (removed) acc.dirty = true
+              break
+            }
           }
+        } catch (error) {
+          deps.log('error', 'Event handler error', { error: error instanceof Error ? error.message : String(error) })
         }
-      } catch (error) {
-        deps.log('error', 'Event handler error', { error: error instanceof Error ? error.message : String(error) })
-      }
+      })
     },
 
     toolExecuteBefore: async (hookInput: { sessionID: string; tool: string }) => {
@@ -396,6 +429,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
       }
+    },
+
+    dispose: async (): Promise<void> => {
+      const pendingQueues = [...new Set(queues.values())]
+      await Promise.allSettled(pendingQueues)
+      const dirtyRoots = [...sessions.values()].filter((acc) => acc.dirty)
+      await Promise.all(dirtyRoots.map((acc) => checkpoint(acc)))
+      queues.clear()
+      sessions.clear()
+      childToParent.clear()
     },
   }
 }
