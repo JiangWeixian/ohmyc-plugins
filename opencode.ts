@@ -10,10 +10,73 @@ import { Database } from 'bun:sqlite'
 import { createWriter } from '@ohmyc/timeline'
 import { CURRENT_SCHEMA_VERSION, SCHEMA_SQL } from '@ohmyc/timeline'
 
-import type { Plugin } from '@opencode-ai/plugin'
+import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { ParsedSessionData } from '@ohmyc/timeline/ingest'
 
 const LOG_FILE = path.join(os.tmpdir(), 'timeline-plugin.log')
+
+export interface HydratedSessionNode {
+  info: Record<string, any>
+  messages: Array<{ info: Record<string, any>; parts: Array<Record<string, any>> }>
+  children: HydratedSessionNode[]
+}
+
+interface SdkResponse<T> {
+  data?: T
+  error?: unknown
+}
+
+export type OpenCodeSnapshotClient = {
+  session: Pick<PluginInput['client']['session'], 'get' | 'messages' | 'children'>
+}
+
+export type LoadSessionTree = (sessionId: string) => Promise<HydratedSessionNode>
+
+type SnapshotSessionApi = {
+  get: (options: { path: { id: string }; url: '/session/{id}' }) => Promise<SdkResponse<Record<string, any>>>
+  messages: (options: { path: { id: string }; url: '/session/{id}/message' }) => Promise<SdkResponse<HydratedSessionNode['messages']>>
+  children: (options: { path: { id: string }; url: '/session/{id}/children' }) => Promise<SdkResponse<Array<Record<string, any>>>>
+}
+
+function responseData<T>(label: string, response: SdkResponse<T>): T {
+  if (response.error || response.data === undefined) {
+    throw new Error(`${label} failed: ${JSON.stringify(response.error ?? 'missing data')}`)
+  }
+  return response.data
+}
+
+export function createSessionTreeLoader(client: OpenCodeSnapshotClient): LoadSessionTree {
+  const session = client.session as unknown as SnapshotSessionApi
+
+  async function loadNode(sessionId: string, knownInfo?: Record<string, any>): Promise<HydratedSessionNode> {
+    const [infoResponse, messagesResponse, childrenResponse] = await Promise.all([
+      knownInfo
+        ? Promise.resolve({ data: knownInfo })
+        : session.get({ path: { id: sessionId }, url: '/session/{id}' }),
+      session.messages({ path: { id: sessionId }, url: '/session/{id}/message' }),
+      session.children({ path: { id: sessionId }, url: '/session/{id}/children' }),
+    ])
+    const info = responseData<Record<string, any>>('session.get', infoResponse)
+    const messages = responseData<HydratedSessionNode['messages']>('session.messages', messagesResponse)
+    const childInfos = responseData<Array<Record<string, any>>>('session.children', childrenResponse)
+    const children = await Promise.all(childInfos.map((child) => loadNode(String(child.id), child)))
+    return { info, messages, children }
+  }
+
+  return async (observedSessionId) => {
+    const observed = await loadNode(observedSessionId)
+    if (!observed.info.parentID) return observed
+
+    let rootInfo = observed.info
+    while (rootInfo.parentID) {
+      rootInfo = responseData<Record<string, any>>(
+        'session.get',
+        await session.get({ path: { id: String(rootInfo.parentID) }, url: '/session/{id}' }),
+      )
+    }
+    return loadNode(String(rootInfo.id), rootInfo)
+  }
+}
 
 function log(level: string, message: string, extra?: Record<string, unknown>): void {
   const entry = `[${new Date().toISOString()}] [${level}] ${message}${extra ? ` ${JSON.stringify(extra)}` : ''}\n`
@@ -212,7 +275,7 @@ export interface EventHandlerDeps {
   project: string // directory basename of the active project
   writer: ReturnType<typeof createWriter> // SQLite session writer
   log: typeof log // logging function
-  loadSessionTree?: (sessionID: string) => Promise<unknown>
+  loadSessionTree: LoadSessionTree
 }
 
 // Creates the event handler and tool hooks for a single project.
@@ -225,6 +288,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
   const childToParent = new Map<string, string>()
   const rootSessionIds = new Set<string>()
   const queues = new Map<string, Promise<void>>()
+  const hydrations = new Map<string, Promise<string>>()
+  let routingTail: Promise<void> = Promise.resolve()
   let legacyCallCount = 0
 
   function enqueue(rootId: string, work: () => Promise<void>): Promise<void> {
@@ -308,27 +373,133 @@ export function createEventHandler(deps: EventHandlerDeps) {
       : {}
   }
 
-  async function tryHydratingUnknownSession(sessionID: string, acc: SessionAccumulator): Promise<void> {
-    if (rootSessionIds.has(acc.sessionId) || acc.hydrated || !deps.loadSessionTree) return
+  function putMessageSnapshot(acc: SessionAccumulator, sessionID: string, info: any): void {
+    if (!info || (info.role !== 'user' && info.role !== 'assistant') || info.id === undefined) return
 
-    try {
-      await deps.loadSessionTree(sessionID)
-    } catch (error) {
-      deps.log('warn', 'OpenCode session hydration failed', {
-        sessionID,
-        error: error instanceof Error ? error.message : String(error),
+    const cache = info.tokens?.cache
+    const snapshot: MessageSnapshot = {
+      sessionId: sessionID,
+      messageId: String(info.id),
+      role: info.role,
+      createdAt: Number(info.time?.created ?? Date.now()),
+      model: info.modelID ? String(info.modelID) : null,
+      tokens: {
+        input: Number(info.tokens?.input ?? 0),
+        output: Number(info.tokens?.output ?? 0),
+        cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
+      },
+    }
+    acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
+    acc.dirty = true
+  }
+
+  function putPartSnapshot(acc: SessionAccumulator, sessionID: string, part: any): void {
+    if (part?.type === 'text' && part.id !== undefined && part.messageID !== undefined) {
+      const snapshot: TextPartSnapshot = {
+        sessionId: sessionID,
+        partId: String(part.id),
+        messageId: String(part.messageID),
+        text: String(part.text ?? ''),
+        synthetic: Boolean(part.synthetic),
+        ignored: Boolean(part.ignored),
+      }
+      acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
+      acc.dirty = true
+    } else if (part?.type === 'tool' && part.id !== undefined && part.callID !== undefined && part.tool !== undefined) {
+      putToolCall(acc, {
+        sessionId: sessionID,
+        callId: String(part.callID),
+        toolName: String(part.tool),
+        args: getArgs(part.state?.input),
+        messageId: part.messageID === undefined ? null : String(part.messageID),
+        partId: String(part.id),
       })
     }
+  }
+
+  function applyRootMetadata(acc: SessionAccumulator, info: Record<string, any>): void {
+    if (info.title !== undefined) acc.title = String(info.title)
+    if (info.time?.created !== undefined) acc.startedAt = Number(info.time.created)
+    if (info.time?.updated !== undefined) acc.endedAt = Number(info.time.updated)
+    if (info.model?.id) acc.sessionModel = String(info.model.id)
+    else if (info.modelID) acc.sessionModel = String(info.modelID)
+    acc.dirty = true
+  }
+
+  function collectHydratedNodes(tree: HydratedSessionNode): Array<{ sessionID: string; node: HydratedSessionNode }> {
+    const nodes: Array<{ sessionID: string; node: HydratedSessionNode }> = []
+
+    function visit(node: HydratedSessionNode): void {
+      if (!node.info?.id) throw new Error('Hydrated OpenCode session is missing an ID')
+      nodes.push({ sessionID: String(node.info.id), node })
+      for (const child of node.children) visit(child)
+    }
+
+    visit(tree)
+    return nodes
+  }
+
+  function mergeHydratedTree(tree: HydratedSessionNode): string {
+    const nodes = collectHydratedNodes(tree)
+    const rootSessionID = nodes[0].sessionID
+    const acc = getAccumulator(rootSessionID)
+
+    for (const { sessionID } of nodes.slice(1)) childToParent.set(sessionID, rootSessionID)
+    applyRootMetadata(acc, tree.info)
+    for (const { sessionID, node } of nodes) {
+      for (const message of node.messages) putMessageSnapshot(acc, sessionID, message.info)
+    }
+    for (const { sessionID, node } of nodes) {
+      for (const message of node.messages) {
+        for (const part of message.parts) putPartSnapshot(acc, sessionID, part)
+      }
+    }
+    acc.hydrated = true
+    rootSessionIds.add(rootSessionID)
+    return rootSessionID
+  }
+
+  function ensureRootRoute(sessionID: string): Promise<string> {
+    const knownRoot = getRootSessionID(sessionID)
+    if (rootSessionIds.has(knownRoot) || sessions.get(knownRoot)?.hydrated) {
+      return Promise.resolve(knownRoot)
+    }
+
+    const existing = hydrations.get(sessionID)
+    if (existing) return existing
+
+    const hydration = deps.loadSessionTree(sessionID)
+      .then((tree) => mergeHydratedTree(tree))
+      .catch((error) => {
+        deps.log('warn', 'OpenCode session hydration failed', {
+          sessionID,
+          error: error instanceof Error ? error.message : String(error),
+        })
+        return getRootSessionID(sessionID)
+      })
+    hydrations.set(sessionID, hydration)
+    void hydration.finally(() => {
+      if (hydrations.get(sessionID) === hydration) hydrations.delete(sessionID)
+    })
+    return hydration
+  }
+
+  function routeAndEnqueue(sessionID: string, work: (rootID: string) => Promise<void>): Promise<void> {
+    let queued: Promise<void> = Promise.resolve()
+    const routed = routingTail.catch(() => undefined).then(async () => {
+      const rootID = await ensureRootRoute(sessionID)
+      queued = enqueue(rootID, () => work(rootID))
+    })
+    routingTail = routed.catch(() => undefined)
+    return routed.then(() => queued)
   }
 
   async function recordToolCall(
     hookInput: { sessionID: string; tool: string; callID?: string; args?: unknown },
     args: Record<string, unknown>,
   ): Promise<void> {
-    const rootID = getRootSessionID(hookInput.sessionID)
-    await enqueue(rootID, async () => {
+    await routeAndEnqueue(hookInput.sessionID, async () => {
       const acc = getAccumulator(hookInput.sessionID)
-      await tryHydratingUnknownSession(hookInput.sessionID, acc)
       const realCallID = typeof hookInput.callID === 'string' && hookInput.callID
         ? hookInput.callID
         : null
@@ -364,31 +535,25 @@ export function createEventHandler(deps: EventHandlerDeps) {
         childToParent.set(sessionID, rootParentID)
         deps.log('debug', 'Subagent session detected', { sessionID, parentID: rootParentID })
       }
-      const rootId = getRootSessionID(sessionID)
+      const isNewRoot = event.type === 'session.created' && !parentID
+      if (isNewRoot) rootSessionIds.add(sessionID)
 
-      return enqueue(rootId, async () => {
+      return routeAndEnqueue(sessionID, async () => {
         try {
           const acc = getAccumulator(sessionID)
-          const isNewRoot = event.type === 'session.created' && !parentID
           if (isNewRoot) {
-            rootSessionIds.add(sessionID)
             acc.hydrated = true
-          } else {
-            await tryHydratingUnknownSession(sessionID, acc)
           }
 
           switch (event.type) {
             case 'session.created':
             case 'session.updated': {
               const info = event.properties?.info
+              if (isChild(sessionID)) break
               const titleChanged = info?.title !== undefined
                 && String(info.title) !== acc.title
                 && !isDefaultSessionTitle(String(info.title))
-              if (info?.title !== undefined) acc.title = String(info.title)
-              if (info?.time?.created !== undefined) acc.startedAt = Number(info.time.created)
-              if (info?.time?.updated !== undefined) acc.endedAt = Number(info.time.updated)
-              if (info?.model?.id) acc.sessionModel = String(info.model.id)
-              acc.dirty = true
+              if (info) applyRootMetadata(acc, info)
               if (event.type === 'session.updated' && acc.persisted && titleChanged) {
                 await checkpoint(acc)
               }
@@ -401,8 +566,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
               if (isChild(sessionID)) {
                 return
               }
-              const acc = sessions.get(sessionID)
-              if (acc) await checkpoint(acc)
+              await checkpoint(acc)
               break
             }
 
@@ -411,8 +575,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 childToParent.delete(sessionID)
                 return
               }
-              const acc = sessions.get(sessionID)
-              const checkpointed = acc ? await checkpoint(acc) : false
+              const checkpointed = await checkpoint(acc)
               if (checkpointed) {
                 sessions.delete(sessionID)
                 for (const [childID, rootID] of childToParent) {
@@ -427,8 +590,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
               if (isChild(sessionID)) {
                 return
               }
-              const acc = sessions.get(sessionID)
-              if (acc) await checkpoint(acc)
+              await checkpoint(acc)
               break
             }
 
@@ -436,49 +598,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
               // OpenCode sends message metadata under either .info or
               // .message depending on the event variant — accept both.
               const info = event.properties?.info || event.properties?.message
-              if (info && (info.role === 'user' || info.role === 'assistant') && info.id !== undefined) {
-                const cache = info.tokens?.cache
-                const snapshot: MessageSnapshot = {
-                  sessionId: sessionID,
-                  messageId: String(info.id),
-                  role: info.role,
-                  createdAt: Number(info.time?.created ?? Date.now()),
-                  model: info.modelID ? String(info.modelID) : null,
-                  tokens: {
-                    input: Number(info.tokens?.input ?? 0),
-                    output: Number(info.tokens?.output ?? 0),
-                    cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
-                  },
-                }
-                acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
-                acc.dirty = true
-              }
+              putMessageSnapshot(acc, sessionID, info)
               break
             }
 
             case 'message.part.updated': {
               const part = event.properties?.part
-              if (part && part.type === 'text' && part.id !== undefined && part.messageID !== undefined) {
-                const snapshot: TextPartSnapshot = {
-                  sessionId: sessionID,
-                  partId: String(part.id),
-                  messageId: String(part.messageID),
-                  text: String(part.text ?? ''),
-                  synthetic: Boolean(part.synthetic),
-                  ignored: Boolean(part.ignored),
-                }
-                acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
-                acc.dirty = true
-              } else if (part && part.type === 'tool' && part.id !== undefined && part.callID !== undefined && part.tool !== undefined) {
-                putToolCall(acc, {
-                  sessionId: sessionID,
-                  callId: String(part.callID),
-                  toolName: String(part.tool),
-                  args: getArgs(part.state?.input),
-                  messageId: part.messageID === undefined ? null : String(part.messageID),
-                  partId: String(part.id),
-                })
-              }
+              putPartSnapshot(acc, sessionID, part)
               break
             }
 
@@ -544,10 +670,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
         if (typeof hookInput.callID === 'string' && hookInput.callID) {
           await recordToolCall(hookInput, args)
         } else if (hookInput.tool === 'Skill' || hookInput.tool === 'skill') {
-          const rootID = getRootSessionID(hookInput.sessionID)
-          await enqueue(rootID, async () => {
+          await routeAndEnqueue(hookInput.sessionID, async () => {
             const acc = getAccumulator(hookInput.sessionID)
-            await tryHydratingUnknownSession(hookInput.sessionID, acc)
             if (typeof args.name === 'string') {
               acc.legacySkills.add(args.name)
               acc.dirty = true
@@ -560,6 +684,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
     },
 
     dispose: async (): Promise<void> => {
+      await routingTail.catch(() => undefined)
       const pendingQueues = [...new Set(queues.values())]
       await Promise.allSettled(pendingQueues)
       const dirtyRoots = [...sessions.values()].filter((acc) => acc.dirty)
@@ -568,6 +693,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
       sessions.clear()
       childToParent.clear()
       rootSessionIds.clear()
+      hydrations.clear()
     },
   }
 }
@@ -590,7 +716,12 @@ export const TimelinePlugin: Plugin = async (input) => {
     return {}
   }
 
-  const { handler, toolExecuteBefore, toolExecuteAfter } = createEventHandler({ project, writer: writer!, log })
+  const { handler, toolExecuteBefore, toolExecuteAfter } = createEventHandler({
+    project,
+    writer: writer!,
+    log,
+    loadSessionTree: createSessionTreeLoader(input.client),
+  })
 
   return {
     event: handler,

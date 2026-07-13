@@ -8,7 +8,7 @@ import {
   vi,
 } from 'vitest'
 
-import { createAccumulator, createEventHandler } from '../../../opencode'
+import { createAccumulator, createEventHandler, type EventHandlerDeps } from '../../../opencode'
 import {
   assistantMessageUpdatedEvent,
   assistantMessageUpdatedEvent2,
@@ -58,6 +58,18 @@ describe('createAccumulator', () => {
 })
 
 describe('createEventHandler', () => {
+  const hydratedTree = {
+    info: { id: 'test-session-001', title: 'Hydrated title', directory: '/workspace/test-project', time: { created: 1, updated: 2 } },
+    messages: [
+      { info: { id: 'hydrated-user-1', sessionID: 'test-session-001', role: 'user', time: { created: 10 } }, parts: [{ id: 'hydrated-text', sessionID: 'test-session-001', messageID: 'hydrated-user-1', type: 'text', text: 'Hydrated prompt' }] },
+      { info: { id: 'hydrated-assistant', sessionID: 'test-session-001', role: 'assistant', time: { created: 20 }, modelID: 'model', tokens: { input: 200, output: 20, cache: { read: 0, write: 0 } } }, parts: [{ id: 'hydrated-tool', sessionID: 'test-session-001', messageID: 'hydrated-assistant', type: 'tool', callID: 'hydrated-call', tool: 'Read', state: { status: 'completed', input: {}, time: { start: 20, end: 21 } } }] },
+    ],
+    children: [{
+      info: { id: 'child-session-001', parentID: 'test-session-001', title: 'child', time: { created: 3, updated: 4 } },
+      messages: [{ info: { id: 'hydrated-user-2', sessionID: 'child-session-001', role: 'user', time: { created: 30 } }, parts: [] }],
+      children: [],
+    }],
+  }
   const mockWriter = {
     writeSession: vi.fn().mockReturnValue({
       sessionId: 'test-session-001',
@@ -69,11 +81,12 @@ describe('createEventHandler', () => {
 
   const mockLog = vi.fn()
 
-  const createHandler = (overrides: Record<string, unknown> = {}) =>
+  const createHandler = (overrides: Partial<EventHandlerDeps> = {}) =>
     createEventHandler({
       project: 'test-project',
       writer: mockWriter as any,
       log: mockLog,
+      loadSessionTree: vi.fn().mockResolvedValue(hydratedTree),
       ...overrides,
     })
 
@@ -83,6 +96,70 @@ describe('createEventHandler', () => {
 
   afterEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('hydrates a resumed session once before its first checkpoint', async () => {
+    const loadSessionTree = vi.fn().mockResolvedValue(hydratedTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: sessionIdleEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(loadSessionTree).toHaveBeenCalledTimes(1)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: 'Hydrated title',
+      turns: 2,
+      tokensInput: 200,
+      tools: expect.arrayContaining([{ toolName: 'Read', callCount: 1 }]),
+    })
+  })
+
+  it('retries hydration without clearing event state after a read failure', async () => {
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValueOnce(hydratedTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(loadSessionTree).toHaveBeenCalledTimes(2)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBeGreaterThanOrEqual(2)
+  })
+
+  it('does not hydrate a session created by the current process', async () => {
+    const loadSessionTree = vi.fn().mockResolvedValue(hydratedTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(loadSessionTree).not.toHaveBeenCalled()
+  })
+
+  it('routes unawaited child and root events through one lane before hydration completes', async () => {
+    let release!: (tree: typeof hydratedTree) => void
+    const loadSessionTree = vi.fn()
+      .mockImplementationOnce(() => new Promise<typeof hydratedTree>((resolve) => { release = resolve }))
+      .mockResolvedValue(hydratedTree)
+    const { handler, dispose } = createHandler({ loadSessionTree })
+    const childMessage = {
+      ...userMessageUpdatedEvent,
+      properties: {
+        sessionID: 'child-session-001',
+        info: { ...userMessageUpdatedEvent.properties.info, id: 'early-child', sessionID: 'child-session-001' },
+      },
+    }
+
+    void handler({ event: childMessage })
+    void handler({ event: sessionIdleEvent })
+    await vi.waitFor(() => expect(loadSessionTree).toHaveBeenCalledTimes(1))
+    release(hydratedTree)
+    await dispose()
+
+    expect(loadSessionTree).toHaveBeenCalledTimes(1)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].sessionId).toBe('test-session-001')
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBeGreaterThanOrEqual(2)
   })
 
   it('replaces repeated message updates instead of double-counting', async () => {
