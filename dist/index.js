@@ -93,6 +93,37 @@ CREATE TABLE meta (
 
 // opencode.ts
 var LOG_FILE = path.join(os.tmpdir(), "timeline-plugin.log");
+function responseData(label, response) {
+  if (response.error || response.data === undefined) {
+    throw new Error(`${label} failed: ${JSON.stringify(response.error ?? "missing data")}`);
+  }
+  return response.data;
+}
+function createSessionTreeLoader(client) {
+  const session = client.session;
+  async function loadNode(sessionId, knownInfo) {
+    const [infoResponse, messagesResponse, childrenResponse] = await Promise.all([
+      knownInfo ? Promise.resolve({ data: knownInfo }) : session.get({ path: { id: sessionId }, url: "/session/{id}" }),
+      session.messages({ path: { id: sessionId }, url: "/session/{id}/message" }),
+      session.children({ path: { id: sessionId }, url: "/session/{id}/children" })
+    ]);
+    const info = responseData("session.get", infoResponse);
+    const messages = responseData("session.messages", messagesResponse);
+    const childInfos = responseData("session.children", childrenResponse);
+    const children = await Promise.all(childInfos.map((child) => loadNode(String(child.id), child)));
+    return { info, messages, children };
+  }
+  return async (observedSessionId) => {
+    const observed = await loadNode(observedSessionId);
+    if (!observed.info.parentID)
+      return observed;
+    let rootInfo = observed.info;
+    while (rootInfo.parentID) {
+      rootInfo = responseData("session.get", await session.get({ path: { id: String(rootInfo.parentID) }, url: "/session/{id}" }));
+    }
+    return loadNode(String(rootInfo.id), rootInfo);
+  };
+}
 function log(level, message, extra) {
   const entry = `[${new Date().toISOString()}] [${level}] ${message}${extra ? ` ${JSON.stringify(extra)}` : ""}
 `;
@@ -127,21 +158,36 @@ function ensureSchema(db) {
   db.exec(SCHEMA_SQL);
   db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run("schema_version", String(CURRENT_SCHEMA_VERSION));
 }
-function createAccumulator(sessionId, project) {
+var defaultTitlePattern = /^(?:New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+function isDefaultSessionTitle(title) {
+  return !title?.trim() || defaultTitlePattern.test(title);
+}
+function keyed(sessionId, id) {
+  return `${sessionId}:${id}`;
+}
+function createAccumulator(sessionId, project = "unknown") {
+  const now = Date.now();
   return {
     sessionId,
-    project: project ?? "unknown",
-    startedAt: Date.now(),
-    endedAt: Date.now(),
-    turns: 0,
-    tokensInput: 0,
-    tokensOutput: 0,
-    tokensCached: 0,
-    tools: new Map,
-    skills: new Set,
-    firstUserMessage: null,
-    summary: null,
-    model: null
+    project,
+    startedAt: now,
+    endedAt: now,
+    title: null,
+    sessionModel: null,
+    messages: new Map,
+    textParts: new Map,
+    toolCalls: new Map,
+    toolPartIndex: new Map,
+    liveMessageKeys: new Set,
+    livePartKeys: new Set,
+    liveToolCallKeys: new Set,
+    messageTombstones: new Set,
+    partTombstones: new Set,
+    liveRootMetadataFields: new Set,
+    legacySkills: new Set,
+    dirty: false,
+    persisted: false,
+    hydrated: false
   };
 }
 function getProjectName(input) {
@@ -154,6 +200,25 @@ function getProjectName(input) {
   return "unknown";
 }
 function toParsedSessionData(acc) {
+  const messages = [...acc.messages.values()];
+  const userMessages = messages.filter((message) => message.role === "user");
+  const assistantMessages = messages.filter((message) => message.role === "assistant");
+  const firstRootUser = userMessages.filter((message) => message.sessionId === acc.sessionId).sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))[0];
+  const firstText = [...acc.textParts.values()].filter((part) => part.sessionId === acc.sessionId && part.messageId === firstRootUser?.messageId).filter((part) => !part.synthetic && !part.ignored && part.text.trim()).sort((a, b) => a.partId.localeCompare(b.partId))[0]?.text.trim();
+  const explicitTitle = isDefaultSessionTitle(acc.title) ? null : acc.title.trim();
+  const summary = explicitTitle ?? firstText ?? "(untitled session)";
+  const tokensInput = assistantMessages.reduce((sum, message) => sum + message.tokens.input, 0);
+  const tokensOutput = assistantMessages.reduce((sum, message) => sum + message.tokens.output, 0);
+  const tokensCached = assistantMessages.reduce((sum, message) => sum + message.tokens.cached, 0);
+  const latestAssistant = assistantMessages.sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId)).at(-1);
+  const toolCounts = new Map;
+  const skills = new Set(acc.legacySkills);
+  for (const call of acc.toolCalls.values()) {
+    toolCounts.set(call.toolName, (toolCounts.get(call.toolName) ?? 0) + 1);
+    if ((call.toolName === "Skill" || call.toolName === "skill") && typeof call.args.name === "string") {
+      skills.add(call.args.name);
+    }
+  }
   return {
     sessionId: acc.sessionId,
     project: acc.project,
@@ -161,34 +226,78 @@ function toParsedSessionData(acc) {
     startedAt: acc.startedAt,
     endedAt: acc.endedAt,
     durationMs: acc.endedAt - acc.startedAt,
-    turns: acc.turns,
-    tokensInput: acc.tokensInput,
-    tokensOutput: acc.tokensOutput,
-    tokensCached: acc.tokensCached,
-    summary: acc.summary ?? acc.firstUserMessage ?? "(untitled session)",
-    summarySource: acc.firstUserMessage ? "first_message" : "auto",
+    turns: userMessages.length,
+    tokensInput,
+    tokensOutput,
+    tokensCached,
+    summary,
+    summarySource: explicitTitle || !firstText ? "auto" : "first_message",
     transcriptPath: `opencode://${acc.sessionId}`,
     fileSize: 0,
-    tools: [...acc.tools.entries()].map(([toolName, callCount]) => ({ toolName, callCount })),
-    skills: [...acc.skills],
-    model: acc.model
+    tools: [...toolCounts.entries()].map(([toolName, callCount]) => ({ toolName, callCount })),
+    skills: [...skills],
+    model: latestAssistant?.model ?? acc.sessionModel
   };
 }
 function getEventSessionID(event) {
-  if (event.properties?.sessionID) {
-    return event.properties.sessionID;
-  }
-  if (event.properties?.info?.id) {
-    return event.properties.info.id;
-  }
-  return;
+  const properties = event.properties;
+  return properties?.sessionID ?? properties?.info?.sessionID ?? properties?.info?.session_id ?? properties?.part?.sessionID ?? properties?.part?.session_id ?? properties?.info?.id;
 }
 function createEventHandler(deps) {
   const sessions = new Map;
   const childToParent = new Map;
+  const rootSessionIds = new Set;
+  const queues = new Map;
+  const hydrations = new Map;
+  let routingTail = Promise.resolve();
+  let legacyCallCount = 0;
+  function enqueue(rootId, work) {
+    const previous = queues.get(rootId) ?? Promise.resolve();
+    const current = previous.catch(() => {
+      return;
+    }).then(work);
+    queues.set(rootId, current);
+    return current.finally(() => {
+      if (queues.get(rootId) === current)
+        queues.delete(rootId);
+    });
+  }
+  function canCheckpoint(acc) {
+    if (!rootSessionIds.has(acc.sessionId)) {
+      deps.log("warn", "Skipped non-root OpenCode checkpoint", { sessionID: acc.sessionId });
+      return false;
+    }
+    return true;
+  }
+  async function checkpoint(acc) {
+    if (!canCheckpoint(acc))
+      return false;
+    acc.endedAt = Date.now();
+    try {
+      deps.writer.writeSession(toParsedSessionData(acc));
+      acc.persisted = true;
+      acc.dirty = false;
+      return true;
+    } catch (error) {
+      acc.dirty = true;
+      deps.log("error", "Failed to write OpenCode checkpoint", {
+        sessionID: acc.sessionId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
+  }
+  function getRootSessionID(sessionID) {
+    let rootID = sessionID;
+    const visited = new Set;
+    while (childToParent.has(rootID) && !visited.has(rootID)) {
+      visited.add(rootID);
+      rootID = childToParent.get(rootID);
+    }
+    return rootID;
+  }
   function getAccumulator(sessionId) {
-    const parentId = childToParent.get(sessionId);
-    const targetId = parentId ?? sessionId;
+    const targetId = getRootSessionID(sessionId);
     let acc = sessions.get(targetId);
     if (!acc) {
       acc = createAccumulator(targetId, deps.project);
@@ -199,143 +308,456 @@ function createEventHandler(deps) {
   function isChild(sessionId) {
     return childToParent.has(sessionId);
   }
+  function putToolCall(acc, value, callKey = keyed(value.sessionId, value.callId), source = "live") {
+    const partKey = value.partId ? keyed(value.sessionId, value.partId) : null;
+    if (source === "hydrated" && (partKey !== null && (acc.livePartKeys.has(partKey) || acc.partTombstones.has(partKey)) || value.messageId !== null && acc.messageTombstones.has(keyed(value.sessionId, value.messageId))))
+      return;
+    const existing = acc.toolCalls.get(callKey);
+    if (source === "hydrated" && acc.liveToolCallKeys.has(callKey) && existing) {
+      const messageId = existing.messageId ?? value.messageId;
+      const partId = existing.partId ?? value.partId;
+      acc.toolCalls.set(callKey, { ...existing, messageId, partId });
+      if (partId)
+        acc.toolPartIndex.set(keyed(value.sessionId, partId), callKey);
+      acc.dirty = true;
+      return;
+    }
+    if (source === "live") {
+      acc.liveToolCallKeys.add(callKey);
+      if (partKey !== null)
+        acc.partTombstones.delete(partKey);
+    }
+    acc.toolCalls.set(callKey, { ...existing, ...value });
+    if (partKey !== null)
+      acc.toolPartIndex.set(partKey, callKey);
+    acc.dirty = true;
+  }
+  function getArgs(value) {
+    return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  }
+  function putMessageSnapshot(acc, sessionID, info, source = "live") {
+    if (!info || info.role !== "user" && info.role !== "assistant" || info.id === undefined)
+      return;
+    const messageKey = keyed(sessionID, String(info.id));
+    if (source === "hydrated" && (acc.liveMessageKeys.has(messageKey) || acc.messageTombstones.has(messageKey)))
+      return;
+    const cache = info.tokens?.cache;
+    const snapshot = {
+      sessionId: sessionID,
+      messageId: String(info.id),
+      role: info.role,
+      createdAt: Number(info.time?.created ?? Date.now()),
+      model: info.modelID ? String(info.modelID) : null,
+      tokens: {
+        input: Number(info.tokens?.input ?? 0),
+        output: Number(info.tokens?.output ?? 0),
+        cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0)
+      }
+    };
+    if (source === "live") {
+      acc.liveMessageKeys.add(messageKey);
+      acc.messageTombstones.delete(messageKey);
+    }
+    acc.messages.set(messageKey, snapshot);
+    acc.dirty = true;
+  }
+  function putPartSnapshot(acc, sessionID, part, source = "live") {
+    if (part?.type === "text" && part.id !== undefined && part.messageID !== undefined) {
+      const partKey = keyed(sessionID, String(part.id));
+      const messageKey = keyed(sessionID, String(part.messageID));
+      if (source === "hydrated" && (acc.livePartKeys.has(partKey) || acc.partTombstones.has(partKey) || acc.messageTombstones.has(messageKey)))
+        return;
+      const snapshot = {
+        sessionId: sessionID,
+        partId: String(part.id),
+        messageId: String(part.messageID),
+        text: String(part.text ?? ""),
+        synthetic: Boolean(part.synthetic),
+        ignored: Boolean(part.ignored)
+      };
+      if (source === "live") {
+        acc.livePartKeys.add(partKey);
+        acc.partTombstones.delete(partKey);
+      }
+      acc.textParts.set(partKey, snapshot);
+      acc.dirty = true;
+    } else if (part?.type === "tool" && part.id !== undefined && part.callID !== undefined && part.tool !== undefined) {
+      const partKey = keyed(sessionID, String(part.id));
+      const messageKey = part.messageID === undefined ? null : keyed(sessionID, String(part.messageID));
+      if (source === "hydrated" && (acc.livePartKeys.has(partKey) || acc.partTombstones.has(partKey) || messageKey !== null && acc.messageTombstones.has(messageKey)))
+        return;
+      if (source === "live") {
+        acc.livePartKeys.add(partKey);
+        acc.partTombstones.delete(partKey);
+      }
+      putToolCall(acc, {
+        sessionId: sessionID,
+        callId: String(part.callID),
+        toolName: String(part.tool),
+        args: getArgs(part.state?.input),
+        messageId: part.messageID === undefined ? null : String(part.messageID),
+        partId: String(part.id)
+      }, keyed(sessionID, String(part.callID)), source);
+    }
+  }
+  function applyRootMetadata(acc, info, source) {
+    function assign(field, value) {
+      if (source === "hydrated" && acc.liveRootMetadataFields.has(field))
+        return;
+      if (field === "title")
+        acc.title = value;
+      else if (field === "startedAt")
+        acc.startedAt = value;
+      else if (field === "endedAt")
+        acc.endedAt = value;
+      else
+        acc.sessionModel = value;
+      if (source === "live")
+        acc.liveRootMetadataFields.add(field);
+    }
+    if (info.title !== undefined)
+      assign("title", String(info.title));
+    if (info.time?.created !== undefined)
+      assign("startedAt", Number(info.time.created));
+    if (info.time?.updated !== undefined)
+      assign("endedAt", Number(info.time.updated));
+    if (info.model?.id)
+      assign("sessionModel", String(info.model.id));
+    else if (info.modelID)
+      assign("sessionModel", String(info.modelID));
+    acc.dirty = true;
+  }
+  function collectHydratedNodes(tree) {
+    const nodes = [];
+    function visit(node) {
+      if (!node.info?.id)
+        throw new Error("Hydrated OpenCode session is missing an ID");
+      nodes.push({ sessionID: String(node.info.id), node });
+      for (const child of node.children)
+        visit(child);
+    }
+    visit(tree);
+    return nodes;
+  }
+  function mergeAccumulator(target, source) {
+    for (const [key, value] of source.messages) {
+      if (!target.messages.has(key))
+        target.messages.set(key, value);
+    }
+    for (const [key, value] of source.textParts) {
+      if (!target.textParts.has(key))
+        target.textParts.set(key, value);
+    }
+    for (const [key, value] of source.toolCalls) {
+      if (!target.toolCalls.has(key))
+        target.toolCalls.set(key, value);
+    }
+    for (const [key, value] of source.toolPartIndex) {
+      if (!target.toolPartIndex.has(key))
+        target.toolPartIndex.set(key, value);
+    }
+    for (const key of source.liveMessageKeys)
+      target.liveMessageKeys.add(key);
+    for (const key of source.livePartKeys)
+      target.livePartKeys.add(key);
+    for (const key of source.liveToolCallKeys)
+      target.liveToolCallKeys.add(key);
+    for (const key of source.messageTombstones)
+      target.messageTombstones.add(key);
+    for (const key of source.partTombstones)
+      target.partTombstones.add(key);
+    for (const skill of source.legacySkills)
+      target.legacySkills.add(skill);
+    target.dirty ||= source.dirty;
+    target.persisted ||= source.persisted;
+  }
+  function clearSessionTombstones(acc, sessionID) {
+    const prefix = `${sessionID}:`;
+    for (const key of acc.messageTombstones) {
+      if (key.startsWith(prefix))
+        acc.messageTombstones.delete(key);
+    }
+    for (const key of acc.partTombstones) {
+      if (key.startsWith(prefix))
+        acc.partTombstones.delete(key);
+    }
+  }
+  function mergeHydratedTree(tree, observedSessionID) {
+    const nodes = collectHydratedNodes(tree);
+    const rootSessionID = nodes[0].sessionID;
+    const acc = getAccumulator(rootSessionID);
+    const migratedSessionIDs = new Set([...nodes.map(({ sessionID }) => sessionID), observedSessionID]);
+    for (const sessionID of migratedSessionIDs) {
+      const source = sessions.get(sessionID);
+      if (source && source !== acc) {
+        mergeAccumulator(acc, source);
+        sessions.delete(sessionID);
+      }
+    }
+    for (const { sessionID } of nodes.slice(1))
+      childToParent.set(sessionID, rootSessionID);
+    if (observedSessionID !== rootSessionID)
+      childToParent.set(observedSessionID, rootSessionID);
+    applyRootMetadata(acc, tree.info, "hydrated");
+    for (const { sessionID, node } of nodes) {
+      for (const message of node.messages)
+        putMessageSnapshot(acc, sessionID, message.info, "hydrated");
+    }
+    for (const { sessionID, node } of nodes) {
+      for (const message of node.messages) {
+        for (const part of message.parts)
+          putPartSnapshot(acc, sessionID, part, "hydrated");
+      }
+    }
+    acc.hydrated = true;
+    rootSessionIds.add(rootSessionID);
+    return rootSessionID;
+  }
+  function ensureRootRoute(sessionID) {
+    const knownRoot = getRootSessionID(sessionID);
+    if (rootSessionIds.has(knownRoot) || sessions.get(knownRoot)?.hydrated) {
+      return Promise.resolve(knownRoot);
+    }
+    const existing = hydrations.get(sessionID);
+    if (existing)
+      return existing;
+    const hydration = deps.loadSessionTree(sessionID).then((tree) => mergeHydratedTree(tree, sessionID)).catch((error) => {
+      deps.log("warn", "OpenCode session hydration failed", {
+        sessionID,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return getRootSessionID(sessionID);
+    });
+    hydrations.set(sessionID, hydration);
+    hydration.finally(() => {
+      if (hydrations.get(sessionID) === hydration)
+        hydrations.delete(sessionID);
+    });
+    return hydration;
+  }
+  function routeAndEnqueue(sessionID, work) {
+    let queued = Promise.resolve();
+    const routed = routingTail.catch(() => {
+      return;
+    }).then(async () => {
+      const rootID = await ensureRootRoute(sessionID);
+      queued = enqueue(rootID, () => work(rootID));
+    });
+    routingTail = routed.catch(() => {
+      return;
+    });
+    return routed.then(() => queued);
+  }
+  async function recordToolCall(hookInput, args) {
+    await routeAndEnqueue(hookInput.sessionID, async () => {
+      const acc = getAccumulator(hookInput.sessionID);
+      const realCallID = typeof hookInput.callID === "string" && hookInput.callID ? hookInput.callID : null;
+      const callID = realCallID ?? `legacy-${++legacyCallCount}`;
+      const callKey = realCallID ? keyed(hookInput.sessionID, realCallID) : Symbol(`legacy-tool-call:${callID}`);
+      const existing = acc.toolCalls.get(callKey);
+      putToolCall(acc, {
+        sessionId: hookInput.sessionID,
+        callId: callID,
+        toolName: hookInput.tool,
+        args,
+        messageId: existing?.messageId ?? null,
+        partId: existing?.partId ?? null
+      }, callKey);
+    });
+  }
   return {
     sessions,
     childToParent,
-    handler: async ({ event }) => {
-      try {
-        switch (event.type) {
-          case "session.created": {
-            const sessionID = getEventSessionID(event);
-            if (sessionID) {
-              const parentID = event.properties?.info?.parentID;
-              if (parentID) {
-                childToParent.set(sessionID, parentID);
-                deps.log("debug", "Subagent session detected", { sessionID, parentID });
-              }
-              const acc = getAccumulator(sessionID);
-              acc.startedAt = Math.min(acc.startedAt, Date.now());
-            }
-            break;
+    handler: ({ event }) => {
+      const sessionID = getEventSessionID(event);
+      if (!sessionID)
+        return Promise.resolve();
+      const parentID = event.type === "session.created" ? event.properties?.info?.parentID : undefined;
+      if (parentID) {
+        const rootParentID = getRootSessionID(parentID);
+        childToParent.set(sessionID, rootParentID);
+        deps.log("debug", "Subagent session detected", { sessionID, parentID: rootParentID });
+      }
+      const isNewRoot = event.type === "session.created" && !parentID;
+      if (isNewRoot)
+        rootSessionIds.add(sessionID);
+      return routeAndEnqueue(sessionID, async () => {
+        try {
+          const acc = getAccumulator(sessionID);
+          if (isNewRoot) {
+            acc.hydrated = true;
           }
-          case "session.idle": {
-            const sessionID = getEventSessionID(event);
-            if (sessionID) {
+          switch (event.type) {
+            case "session.created":
+            case "session.updated": {
+              const info = event.properties?.info;
+              if (isChild(sessionID))
+                break;
+              const titleChanged = info?.title !== undefined && String(info.title) !== acc.title && !isDefaultSessionTitle(String(info.title));
+              if (info)
+                applyRootMetadata(acc, info, "live");
+              if (event.type === "session.updated" && acc.persisted && titleChanged) {
+                await checkpoint(acc);
+              }
+              break;
+            }
+            case "session.idle": {
               if (isChild(sessionID)) {
+                return;
+              }
+              await checkpoint(acc);
+              break;
+            }
+            case "session.deleted": {
+              if (isChild(sessionID)) {
+                clearSessionTombstones(acc, sessionID);
                 childToParent.delete(sessionID);
                 return;
               }
-              const acc = sessions.get(sessionID);
-              if (!acc) {
-                return;
-              }
-              acc.endedAt = Date.now();
-              const data = toParsedSessionData(acc);
-              try {
-                deps.writer.writeSession(data);
+              const checkpointed = await checkpoint(acc);
+              if (checkpointed) {
                 sessions.delete(sessionID);
-              } catch (writeError) {
-                deps.log("error", "Failed to write session on idle", {
-                  sessionID,
-                  error: writeError instanceof Error ? writeError.message : String(writeError)
-                });
-              }
-            }
-            break;
-          }
-          case "session.deleted": {
-            const sessionID = getEventSessionID(event);
-            if (sessionID) {
-              if (isChild(sessionID)) {
-                childToParent.delete(sessionID);
-                return;
-              }
-              const acc = sessions.get(sessionID);
-              if (acc) {
-                acc.endedAt = Date.now();
-                deps.writer.writeSession(toParsedSessionData(acc));
-                sessions.delete(sessionID);
-              }
-            }
-            break;
-          }
-          case "session.error": {
-            const sessionID = getEventSessionID(event);
-            if (sessionID) {
-              if (isChild(sessionID)) {
-                childToParent.delete(sessionID);
-                return;
-              }
-              const acc = sessions.get(sessionID);
-              if (acc) {
-                acc.endedAt = Date.now();
-                deps.writer.writeSession(toParsedSessionData(acc));
-              }
-            }
-            break;
-          }
-          case "message.updated": {
-            const info = event.properties?.info || event.properties?.message;
-            if (info) {
-              const sessionID = info.sessionID || info.session_id;
-              if (sessionID) {
-                const acc = getAccumulator(sessionID);
-                if (info.role === "user") {
-                  acc.turns += 1;
+                for (const [childID, rootID] of childToParent) {
+                  if (rootID === sessionID)
+                    childToParent.delete(childID);
                 }
-                if (info.role === "assistant" && info.tokens) {
-                  acc.tokensInput += info.tokens.input || 0;
-                  acc.tokensOutput += info.tokens.output || 0;
-                  if (info.tokens.cache) {
-                    acc.tokensCached += (info.tokens.cache.read || 0) + (info.tokens.cache.write || 0);
+                rootSessionIds.delete(sessionID);
+              }
+              break;
+            }
+            case "session.error": {
+              if (isChild(sessionID)) {
+                return;
+              }
+              await checkpoint(acc);
+              break;
+            }
+            case "message.updated": {
+              const info = event.properties?.info || event.properties?.message;
+              putMessageSnapshot(acc, sessionID, info);
+              break;
+            }
+            case "message.part.updated": {
+              const part = event.properties?.part;
+              putPartSnapshot(acc, sessionID, part);
+              break;
+            }
+            case "message.part.removed": {
+              const partID = event.properties?.partID;
+              if (partID === undefined)
+                break;
+              const partKey = keyed(sessionID, String(partID));
+              const callKey = acc.toolPartIndex.get(partKey);
+              if (callKey) {
+                acc.toolCalls.delete(callKey);
+                acc.liveToolCallKeys.delete(callKey);
+              }
+              acc.toolPartIndex.delete(partKey);
+              acc.textParts.delete(partKey);
+              acc.livePartKeys.delete(partKey);
+              acc.partTombstones.add(partKey);
+              acc.dirty = true;
+              break;
+            }
+            case "message.removed": {
+              const messageID = event.properties?.messageID;
+              if (messageID === undefined)
+                break;
+              const normalizedMessageID = String(messageID);
+              const messageKey = keyed(sessionID, normalizedMessageID);
+              let removed = acc.messages.delete(messageKey);
+              acc.liveMessageKeys.delete(messageKey);
+              acc.messageTombstones.add(messageKey);
+              for (const [partKey, part] of acc.textParts) {
+                if (part.sessionId === sessionID && part.messageId === normalizedMessageID) {
+                  acc.textParts.delete(partKey);
+                  acc.livePartKeys.delete(partKey);
+                  acc.partTombstones.add(partKey);
+                  removed = true;
+                }
+              }
+              for (const [callKey, call] of acc.toolCalls) {
+                if (call.sessionId === sessionID && call.messageId === normalizedMessageID) {
+                  acc.toolCalls.delete(callKey);
+                  acc.liveToolCallKeys.delete(callKey);
+                  if (call.partId) {
+                    const partKey = keyed(sessionID, call.partId);
+                    acc.toolPartIndex.delete(partKey);
+                    acc.livePartKeys.delete(partKey);
+                    acc.partTombstones.add(partKey);
                   }
-                }
-                if (info.modelID) {
-                  acc.model = info.modelID;
+                  removed = true;
                 }
               }
+              acc.dirty = removed || acc.messageTombstones.has(messageKey);
+              break;
             }
-            break;
           }
-          case "message.part.updated": {
-            const part = event.properties?.part;
-            if (part && part.type === "text" && !part.synthetic && !part.ignored) {
-              const sessionID = part.sessionID || part.session_id;
-              if (sessionID && part.text?.trim()) {
-                const acc = getAccumulator(sessionID);
-                if (!acc.firstUserMessage) {
-                  acc.firstUserMessage = part.text.trim();
-                }
-              }
-            }
-            break;
-          }
+        } catch (error) {
+          deps.log("error", "Event handler error", { error: error instanceof Error ? error.message : String(error) });
         }
-      } catch (error) {
-        deps.log("error", "Event handler error", { error: error instanceof Error ? error.message : String(error) });
-      }
+      });
     },
-    toolExecuteBefore: async (hookInput) => {
+    toolExecuteBefore: async (hookInput, hookOutput) => {
       try {
-        const acc = getAccumulator(hookInput.sessionID);
-        acc.tools.set(hookInput.tool, (acc.tools.get(hookInput.tool) || 0) + 1);
+        await recordToolCall(hookInput, getArgs(hookOutput?.args));
       } catch (error) {
         deps.log("error", "Tool execute error", { error: error instanceof Error ? error.message : String(error) });
       }
     },
-    toolExecuteAfter: async (hookInput) => {
+    toolExecuteAfter: async (hookInput, _hookOutput) => {
       try {
-        if (hookInput.tool === "Skill" || hookInput.tool === "skill") {
-          const acc = getAccumulator(hookInput.sessionID);
-          const args = hookInput.args;
-          if (args && typeof args === "object" && typeof args.name === "string") {
-            acc.skills.add(args.name);
-          }
+        const args = getArgs(hookInput.args);
+        if (typeof hookInput.callID === "string" && hookInput.callID) {
+          await recordToolCall(hookInput, args);
+        } else if (hookInput.tool === "Skill" || hookInput.tool === "skill") {
+          await routeAndEnqueue(hookInput.sessionID, async () => {
+            const acc = getAccumulator(hookInput.sessionID);
+            if (typeof args.name === "string") {
+              acc.legacySkills.add(args.name);
+              acc.dirty = true;
+            }
+          });
         }
       } catch (error) {
         deps.log("error", "Tool execute error", { error: error instanceof Error ? error.message : String(error) });
       }
+    },
+    dispose: async () => {
+      await routingTail.catch(() => {
+        return;
+      });
+      const pendingQueues = [...new Set(queues.values())];
+      await Promise.allSettled(pendingQueues);
+      const dirtyRoots = [...sessions.values()].filter((acc) => acc.dirty);
+      await Promise.all(dirtyRoots.map((acc) => checkpoint(acc)));
+      queues.clear();
+      sessions.clear();
+      childToParent.clear();
+      rootSessionIds.clear();
+      hydrations.clear();
     }
+  };
+}
+async function disposeTimelineRuntime(disposeRuntime, close) {
+  try {
+    await disposeRuntime();
+  } finally {
+    close();
+  }
+}
+function createTimelineHooks(input) {
+  const runtime = createEventHandler({
+    project: input.project,
+    writer: input.writer,
+    log,
+    loadSessionTree: createSessionTreeLoader(input.client)
+  });
+  return {
+    event: runtime.handler,
+    "tool.execute.before": runtime.toolExecuteBefore,
+    "tool.execute.after": runtime.toolExecuteAfter,
+    dispose: () => disposeTimelineRuntime(runtime.dispose, input.close)
   };
 }
 var TimelinePlugin = async (input) => {
@@ -349,16 +771,20 @@ var TimelinePlugin = async (input) => {
     log("error", "Database init failed", { error: error instanceof Error ? error.message : String(error) });
     return {};
   }
-  const { handler, toolExecuteBefore, toolExecuteAfter } = createEventHandler({ project, writer, log });
-  return {
-    event: handler,
-    "tool.execute.before": toolExecuteBefore,
-    "tool.execute.after": toolExecuteAfter
-  };
+  return createTimelineHooks({
+    project,
+    writer,
+    client: input.client,
+    close: () => db?.close()
+  });
 };
 var opencode_default = TimelinePlugin;
 export {
+  isDefaultSessionTitle,
+  disposeTimelineRuntime,
   opencode_default as default,
+  createTimelineHooks,
+  createSessionTreeLoader,
   createEventHandler,
   createAccumulator,
   TimelinePlugin

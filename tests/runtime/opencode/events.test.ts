@@ -8,7 +8,13 @@ import {
   vi,
 } from 'vitest'
 
-import { createAccumulator, createEventHandler, type EventHandlerDeps } from '../../../opencode'
+import {
+  createAccumulator,
+  createEventHandler,
+  createTimelineHooks,
+  disposeTimelineRuntime,
+  type EventHandlerDeps,
+} from '../../../opencode'
 import {
   assistantMessageUpdatedEvent,
   assistantMessageUpdatedEvent2,
@@ -770,5 +776,58 @@ describe('createEventHandler', () => {
     await handler({ event: sessionErrorEvent })
 
     expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('createTimelineHooks', () => {
+  const mockWriter = {
+    writeSession: vi.fn().mockReturnValue({
+      sessionId: 'test-session-001',
+      project: 'test-project',
+      sessionsInserted: 1,
+      sessionsUpdated: 0,
+    }),
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('flushes queued events and closes the database on dispose', async () => {
+    const close = vi.fn()
+    const client = { session: {
+      get: vi.fn(),
+      messages: vi.fn(),
+      children: vi.fn(),
+    } }
+    const hooks = createTimelineHooks({
+      project: 'test-project',
+      writer: mockWriter as any,
+      client: client as any,
+      close,
+    })
+
+    void hooks.event({ event: sessionCreatedEvent as any })
+    void hooks.event({ event: userMessageUpdatedEvent as any })
+    void hooks.event({ event: sessionIdleEvent as any })
+    await hooks.dispose()
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBe(1)
+    expect(close).toHaveBeenCalledTimes(1)
+  })
+
+  it('closes the database once when runtime disposal rejects', async () => {
+    const close = vi.fn()
+
+    await expect(disposeTimelineRuntime(
+      () => Promise.reject(new Error('queue failed')),
+      close,
+    )).rejects.toThrow('queue failed')
+
+    expect(close).toHaveBeenCalledTimes(1)
   })
 })

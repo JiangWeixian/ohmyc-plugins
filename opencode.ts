@@ -841,6 +841,38 @@ export function createEventHandler(deps: EventHandlerDeps) {
   }
 }
 
+export async function disposeTimelineRuntime(
+  disposeRuntime: () => Promise<void>,
+  close: () => void,
+): Promise<void> {
+  try {
+    await disposeRuntime()
+  } finally {
+    close()
+  }
+}
+
+export function createTimelineHooks(input: {
+  project: string
+  writer: ReturnType<typeof createWriter>
+  client: Parameters<typeof createSessionTreeLoader>[0]
+  close: () => void
+}) {
+  const runtime = createEventHandler({
+    project: input.project,
+    writer: input.writer,
+    log,
+    loadSessionTree: createSessionTreeLoader(input.client),
+  })
+
+  return {
+    event: runtime.handler,
+    'tool.execute.before': runtime.toolExecuteBefore,
+    'tool.execute.after': runtime.toolExecuteAfter,
+    dispose: () => disposeTimelineRuntime(runtime.dispose, input.close),
+  }
+}
+
 // OpenCode plugin entry point. Initializes the SQLite database and
 // returns event + tool hooks that the OpenCode runtime calls.
 export const TimelinePlugin: Plugin = async (input) => {
@@ -859,18 +891,12 @@ export const TimelinePlugin: Plugin = async (input) => {
     return {}
   }
 
-  const { handler, toolExecuteBefore, toolExecuteAfter } = createEventHandler({
+  return createTimelineHooks({
     project,
     writer: writer!,
-    log,
-    loadSessionTree: createSessionTreeLoader(input.client),
+    client: input.client,
+    close: () => db?.close(),
   })
-
-  return {
-    event: handler,
-    'tool.execute.before': toolExecuteBefore,
-    'tool.execute.after': toolExecuteAfter,
-  }
 }
 
 export default TimelinePlugin
