@@ -565,8 +565,8 @@ describe('createEventHandler', () => {
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([{ toolName: 'Read', callCount: 1 }])
   })
 
-  it('reconciles the source-shaped task hook part ID with its persisted call ID', async () => {
-    const { handler, sessions, toolExecuteBefore } = createHandler()
+  it('keeps task after-hook state on the canonical call after final part updates', async () => {
+    const { handler, sessions, toolExecuteAfter, toolExecuteBefore } = createHandler()
     const part = {
       id: 'task-part-001',
       sessionID: 'test-session-001',
@@ -580,7 +580,61 @@ describe('createEventHandler', () => {
     await handler({ event: sessionCreatedEvent })
     await toolExecuteBefore(
       { sessionID: 'test-session-001', tool: 'task', callID: part.id },
-      { args: { prompt: 'live prompt' } },
+      { args: { prompt: 'before prompt' } },
+    )
+    await handler({ event: { type: 'message.part.updated', properties: { sessionID: 'test-session-001', part } } })
+    await toolExecuteAfter(
+      { sessionID: 'test-session-001', tool: 'task', callID: part.id, args: { prompt: 'after prompt' } },
+      { output: 'after output' },
+    )
+    await handler({ event: {
+      type: 'message.part.updated',
+      properties: {
+        sessionID: 'test-session-001',
+        part: { ...part, state: { input: { prompt: 'final persisted prompt' } } },
+      },
+    } })
+
+    const acc = sessions.get('test-session-001')!
+    expect(acc.toolCalls).toEqual(new Map([['test-session-001:task-call-001', {
+      sessionId: 'test-session-001',
+      callId: 'task-call-001',
+      toolName: 'task',
+      args: { prompt: 'after prompt' },
+      messageId: 'msg-assistant-001',
+      partId: 'task-part-001',
+    }]]))
+    expect(acc.toolCalls.has('test-session-001:task-part-001')).toBe(false)
+    expect(acc.toolPartIndex.get('test-session-001:task-part-001')).toBe('test-session-001:task-call-001')
+    expect((acc as any).taskHookAliases).toEqual(new Map([
+      ['test-session-001:task-part-001', 'test-session-001:task-call-001'],
+    ]))
+
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([{ toolName: 'task', callCount: 1 }])
+  })
+
+  it('merges task before and after hooks when the persisted part arrives last', async () => {
+    const { handler, sessions, toolExecuteAfter, toolExecuteBefore } = createHandler()
+    const part = {
+      id: 'task-part-001',
+      sessionID: 'test-session-001',
+      messageID: 'msg-assistant-001',
+      type: 'tool',
+      callID: 'task-call-001',
+      tool: 'task',
+      state: { input: { prompt: 'persisted prompt' } },
+    }
+
+    await handler({ event: sessionCreatedEvent })
+    await toolExecuteBefore(
+      { sessionID: 'test-session-001', tool: 'task', callID: part.id },
+      { args: { prompt: 'before prompt' } },
+    )
+    await toolExecuteAfter(
+      { sessionID: 'test-session-001', tool: 'task', callID: part.id, args: { prompt: 'after prompt' } },
+      { output: 'after output' },
     )
     await handler({ event: { type: 'message.part.updated', properties: { sessionID: 'test-session-001', part } } })
 
@@ -589,12 +643,13 @@ describe('createEventHandler', () => {
       sessionId: 'test-session-001',
       callId: 'task-call-001',
       toolName: 'task',
-      args: { prompt: 'live prompt' },
+      args: { prompt: 'after prompt' },
       messageId: 'msg-assistant-001',
       partId: 'task-part-001',
     }]]))
-    expect(acc.toolCalls.has('test-session-001:task-part-001')).toBe(false)
-    expect(acc.toolPartIndex.get('test-session-001:task-part-001')).toBe('test-session-001:task-call-001')
+    expect((acc as any).taskHookAliases).toEqual(new Map([
+      ['test-session-001:task-part-001', 'test-session-001:task-call-001'],
+    ]))
 
     await handler({ event: sessionIdleEvent })
 

@@ -189,6 +189,7 @@ function createAccumulator(sessionId, project = "unknown") {
     textParts: new Map,
     toolCalls: new Map,
     toolPartIndex: new Map,
+    taskHookAliases: new Map,
     liveMessageKeys: new Set,
     livePartKeys: new Set,
     liveToolCallKeys: new Set,
@@ -343,25 +344,33 @@ function createEventHandler(deps) {
       acc.toolPartIndex.set(partKey, callKey);
     acc.dirty = true;
   }
+  function isTaskTool(toolName) {
+    return typeof toolName === "string" && toolName.toLowerCase() === "task";
+  }
   function reconcileTaskHookAlias(acc, sessionID, part) {
     const partId = String(part.id);
     const callId = String(part.callID);
     const partKey = keyed(sessionID, partId);
     const callKey = keyed(sessionID, callId);
-    const toolName = String(part.tool);
     const alias = acc.toolCalls.get(partKey);
-    if (partKey === callKey || toolName.toLowerCase() !== "task" || alias?.toolName.toLowerCase() !== "task" || alias.partId !== null || acc.toolCalls.has(callKey))
+    const canonical = acc.toolCalls.get(callKey);
+    if (partKey === callKey || !isTaskTool(part.tool) || canonical && !isTaskTool(canonical.toolName) || alias && isTaskTool(alias.toolName) && alias.partId !== null)
       return;
-    acc.toolCalls.delete(partKey);
-    acc.liveToolCallKeys.delete(partKey);
-    acc.toolCalls.set(callKey, {
-      ...alias,
-      callId,
-      messageId: part.messageID === undefined ? null : String(part.messageID),
-      partId
-    });
-    acc.liveToolCallKeys.add(callKey);
-    return alias.args;
+    if (alias && isTaskTool(alias.toolName)) {
+      acc.toolCalls.delete(partKey);
+      acc.liveToolCallKeys.delete(partKey);
+      acc.toolCalls.set(callKey, {
+        ...canonical,
+        ...alias,
+        callId,
+        messageId: part.messageID === undefined ? null : String(part.messageID),
+        partId
+      });
+      acc.liveToolCallKeys.add(callKey);
+    }
+    acc.taskHookAliases.set(partKey, callKey);
+    const existing = acc.toolCalls.get(callKey);
+    return acc.liveToolCallKeys.has(callKey) ? existing?.args : undefined;
   }
   function getArgs(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -488,6 +497,9 @@ function createEventHandler(deps) {
       if (!target.toolPartIndex.has(key))
         target.toolPartIndex.set(key, value);
     }
+    for (const [key, value] of source.taskHookAliases) {
+      target.taskHookAliases.set(key, value);
+    }
     for (const key of source.liveMessageKeys)
       target.liveMessageKeys.add(key);
     for (const key of source.livePartKeys)
@@ -512,6 +524,13 @@ function createEventHandler(deps) {
     for (const key of acc.partTombstones) {
       if (key.startsWith(prefix))
         acc.partTombstones.delete(key);
+    }
+  }
+  function clearTaskHookAliases(acc, sessionID) {
+    const prefix = `${sessionID}:`;
+    for (const key of acc.taskHookAliases.keys()) {
+      if (key.startsWith(prefix))
+        acc.taskHookAliases.delete(key);
     }
   }
   function mergeHydratedTree(tree, observedSessionID) {
@@ -584,12 +603,14 @@ function createEventHandler(deps) {
     await routeAndEnqueue(hookInput.sessionID, async () => {
       const acc = getAccumulator(hookInput.sessionID);
       const realCallID = typeof hookInput.callID === "string" && hookInput.callID ? hookInput.callID : null;
-      const callID = realCallID ?? `legacy-${++legacyCallCount}`;
-      const callKey = realCallID ? keyed(hookInput.sessionID, realCallID) : Symbol(`legacy-tool-call:${callID}`);
+      const directCallID = realCallID ?? `legacy-${++legacyCallCount}`;
+      const directCallKey = realCallID ? keyed(hookInput.sessionID, realCallID) : Symbol(`legacy-tool-call:${directCallID}`);
+      const taskAlias = realCallID && isTaskTool(hookInput.tool) ? acc.taskHookAliases.get(keyed(hookInput.sessionID, realCallID)) : undefined;
+      const callKey = taskAlias && acc.toolCalls.has(taskAlias) ? taskAlias : directCallKey;
       const existing = acc.toolCalls.get(callKey);
       putToolCall(acc, {
         sessionId: hookInput.sessionID,
-        callId: callID,
+        callId: existing?.callId ?? directCallID,
         toolName: hookInput.tool,
         args,
         messageId: existing?.messageId ?? null,
@@ -643,11 +664,13 @@ function createEventHandler(deps) {
             case "session.deleted": {
               if (isChild(sessionID)) {
                 clearSessionTombstones(acc, sessionID);
+                clearTaskHookAliases(acc, sessionID);
                 childToParent.delete(sessionID);
                 return;
               }
               const checkpointed = await checkpoint(acc);
               if (checkpointed) {
+                clearTaskHookAliases(acc, sessionID);
                 sessions.delete(sessionID);
                 for (const [childID, rootID] of childToParent) {
                   if (rootID === sessionID)
@@ -684,6 +707,7 @@ function createEventHandler(deps) {
                 acc.toolCalls.delete(callKey);
                 acc.liveToolCallKeys.delete(callKey);
               }
+              acc.taskHookAliases.delete(partKey);
               acc.toolPartIndex.delete(partKey);
               acc.textParts.delete(partKey);
               acc.livePartKeys.delete(partKey);
@@ -714,6 +738,7 @@ function createEventHandler(deps) {
                   acc.liveToolCallKeys.delete(callKey);
                   if (call.partId) {
                     const partKey = keyed(sessionID, call.partId);
+                    acc.taskHookAliases.delete(partKey);
                     acc.toolPartIndex.delete(partKey);
                     acc.livePartKeys.delete(partKey);
                     acc.partTombstones.add(partKey);
@@ -763,6 +788,8 @@ function createEventHandler(deps) {
       await Promise.allSettled(pendingQueues);
       const dirtyRoots = [...sessions.values()].filter((acc) => acc.dirty);
       await Promise.all(dirtyRoots.map((acc) => checkpoint(acc)));
+      for (const acc of sessions.values())
+        acc.taskHookAliases.clear();
       queues.clear();
       sessions.clear();
       childToParent.clear();

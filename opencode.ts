@@ -175,6 +175,7 @@ interface SessionAccumulator {
   textParts: Map<string, TextPartSnapshot>
   toolCalls: Map<ToolCallKey, ToolCallSnapshot>
   toolPartIndex: Map<string, ToolCallKey>
+  taskHookAliases: Map<string, string>
   liveMessageKeys: Set<string>
   livePartKeys: Set<string>
   liveToolCallKeys: Set<ToolCallKey>
@@ -212,6 +213,7 @@ export function createAccumulator(sessionId: string, project = 'unknown'): Sessi
     textParts: new Map(),
     toolCalls: new Map(),
     toolPartIndex: new Map(),
+    taskHookAliases: new Map(),
     liveMessageKeys: new Set(),
     livePartKeys: new Set(),
     liveToolCallKeys: new Set(),
@@ -414,6 +416,10 @@ export function createEventHandler(deps: EventHandlerDeps) {
     acc.dirty = true
   }
 
+  function isTaskTool(toolName: unknown): boolean {
+    return typeof toolName === 'string' && toolName.toLowerCase() === 'task'
+  }
+
   function reconcileTaskHookAlias(
     acc: SessionAccumulator,
     sessionID: string,
@@ -423,27 +429,32 @@ export function createEventHandler(deps: EventHandlerDeps) {
     const callId = String(part.callID)
     const partKey = keyed(sessionID, partId)
     const callKey = keyed(sessionID, callId)
-    const toolName = String(part.tool)
     const alias = acc.toolCalls.get(partKey)
+    const canonical = acc.toolCalls.get(callKey)
 
     if (
       partKey === callKey
-      || toolName.toLowerCase() !== 'task'
-      || alias?.toolName.toLowerCase() !== 'task'
-      || alias.partId !== null
-      || acc.toolCalls.has(callKey)
+      || !isTaskTool(part.tool)
+      || (canonical && !isTaskTool(canonical.toolName))
+      || (alias && isTaskTool(alias.toolName) && alias.partId !== null)
     ) return undefined
 
-    acc.toolCalls.delete(partKey)
-    acc.liveToolCallKeys.delete(partKey)
-    acc.toolCalls.set(callKey, {
-      ...alias,
-      callId,
-      messageId: part.messageID === undefined ? null : String(part.messageID),
-      partId,
-    })
-    acc.liveToolCallKeys.add(callKey)
-    return alias.args
+    if (alias && isTaskTool(alias.toolName)) {
+      acc.toolCalls.delete(partKey)
+      acc.liveToolCallKeys.delete(partKey)
+      acc.toolCalls.set(callKey, {
+        ...canonical,
+        ...alias,
+        callId,
+        messageId: part.messageID === undefined ? null : String(part.messageID),
+        partId,
+      })
+      acc.liveToolCallKeys.add(callKey)
+    }
+
+    acc.taskHookAliases.set(partKey, callKey)
+    const existing = acc.toolCalls.get(callKey)
+    return acc.liveToolCallKeys.has(callKey) ? existing?.args : undefined
   }
 
   function getArgs(value: unknown): Record<string, unknown> {
@@ -583,6 +594,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
     for (const [key, value] of source.toolPartIndex) {
       if (!target.toolPartIndex.has(key)) target.toolPartIndex.set(key, value)
     }
+    for (const [key, value] of source.taskHookAliases) {
+      target.taskHookAliases.set(key, value)
+    }
     for (const key of source.liveMessageKeys) target.liveMessageKeys.add(key)
     for (const key of source.livePartKeys) target.livePartKeys.add(key)
     for (const key of source.liveToolCallKeys) target.liveToolCallKeys.add(key)
@@ -600,6 +614,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
     }
     for (const key of acc.partTombstones) {
       if (key.startsWith(prefix)) acc.partTombstones.delete(key)
+    }
+  }
+
+  function clearTaskHookAliases(acc: SessionAccumulator, sessionID: string): void {
+    const prefix = `${sessionID}:`
+    for (const key of acc.taskHookAliases.keys()) {
+      if (key.startsWith(prefix)) acc.taskHookAliases.delete(key)
     }
   }
 
@@ -676,14 +697,18 @@ export function createEventHandler(deps: EventHandlerDeps) {
       const realCallID = typeof hookInput.callID === 'string' && hookInput.callID
         ? hookInput.callID
         : null
-      const callID = realCallID ?? `legacy-${++legacyCallCount}`
-      const callKey = realCallID
+      const directCallID = realCallID ?? `legacy-${++legacyCallCount}`
+      const directCallKey = realCallID
         ? keyed(hookInput.sessionID, realCallID)
-        : Symbol(`legacy-tool-call:${callID}`)
+        : Symbol(`legacy-tool-call:${directCallID}`)
+      const taskAlias = realCallID && isTaskTool(hookInput.tool)
+        ? acc.taskHookAliases.get(keyed(hookInput.sessionID, realCallID))
+        : undefined
+      const callKey = taskAlias && acc.toolCalls.has(taskAlias) ? taskAlias : directCallKey
       const existing = acc.toolCalls.get(callKey)
       putToolCall(acc, {
         sessionId: hookInput.sessionID,
-        callId: callID,
+        callId: existing?.callId ?? directCallID,
         toolName: hookInput.tool,
         args,
         messageId: existing?.messageId ?? null,
@@ -746,11 +771,13 @@ export function createEventHandler(deps: EventHandlerDeps) {
             case 'session.deleted': {
               if (isChild(sessionID)) {
                 clearSessionTombstones(acc, sessionID)
+                clearTaskHookAliases(acc, sessionID)
                 childToParent.delete(sessionID)
                 return
               }
               const checkpointed = await checkpoint(acc)
               if (checkpointed) {
+                clearTaskHookAliases(acc, sessionID)
                 sessions.delete(sessionID)
                 for (const [childID, rootID] of childToParent) {
                   if (rootID === sessionID) childToParent.delete(childID)
@@ -792,6 +819,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 acc.toolCalls.delete(callKey)
                 acc.liveToolCallKeys.delete(callKey)
               }
+              acc.taskHookAliases.delete(partKey)
               acc.toolPartIndex.delete(partKey)
               acc.textParts.delete(partKey)
               acc.livePartKeys.delete(partKey)
@@ -823,6 +851,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
                   acc.liveToolCallKeys.delete(callKey)
                   if (call.partId) {
                     const partKey = keyed(sessionID, call.partId)
+                    acc.taskHookAliases.delete(partKey)
                     acc.toolPartIndex.delete(partKey)
                     acc.livePartKeys.delete(partKey)
                     acc.partTombstones.add(partKey)
@@ -879,6 +908,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
       await Promise.allSettled(pendingQueues)
       const dirtyRoots = [...sessions.values()].filter((acc) => acc.dirty)
       await Promise.all(dirtyRoots.map((acc) => checkpoint(acc)))
+      for (const acc of sessions.values()) acc.taskHookAliases.clear()
       queues.clear()
       sessions.clear()
       childToParent.clear()
