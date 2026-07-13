@@ -266,22 +266,20 @@ export function createEventHandler(deps: EventHandlerDeps) {
       const sessionID = getEventSessionID(event)
       if (!sessionID) return Promise.resolve()
 
-      const rootId = childToParent.get(sessionID)
-        ?? (event.type === 'session.created' ? event.properties?.info?.parentID as string | undefined : undefined)
-        ?? sessionID
+      const parentID = event.type === 'session.created'
+        ? event.properties?.info?.parentID as string | undefined
+        : undefined
+      if (parentID) {
+        childToParent.set(sessionID, parentID)
+        deps.log('debug', 'Subagent session detected', { sessionID, parentID })
+      }
+      const rootId = childToParent.get(sessionID) ?? sessionID
 
       return enqueue(rootId, async () => {
         try {
           switch (event.type) {
             case 'session.created':
             case 'session.updated': {
-              const parentID = event.type === 'session.created'
-                ? event.properties?.info?.parentID as string | undefined
-                : undefined
-              if (parentID) {
-                childToParent.set(sessionID, parentID)
-                deps.log('debug', 'Subagent session detected', { sessionID, parentID })
-              }
               const acc = getAccumulator(sessionID)
               const info = event.properties?.info
               const titleChanged = info?.title !== undefined

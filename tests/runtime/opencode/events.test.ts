@@ -223,6 +223,47 @@ describe('createEventHandler', () => {
     })
   })
 
+  it('routes fire-and-forget child events through the pending parent queue', async () => {
+    const { handler, sessions, toolExecuteBefore } = createHandler()
+    const childSessionID = 'child-session-001'
+    const pendingParent = handler({ event: sessionCreatedEvent })
+    const pendingChild = handler({
+      event: {
+        type: 'session.created',
+        properties: {
+          sessionID: childSessionID,
+          info: { id: childSessionID, parentID: 'test-session-001' },
+        },
+      },
+    })
+    const pendingMessage = handler({
+      event: {
+        type: 'message.updated',
+        properties: {
+          sessionID: childSessionID,
+          info: {
+            ...userMessageUpdatedEvent.properties.info,
+            id: 'msg-child-user-001',
+            sessionID: childSessionID,
+          },
+        },
+      },
+    })
+    const pendingTool = toolExecuteBefore({ sessionID: childSessionID, tool: 'Read' })
+
+    await Promise.all([pendingParent, pendingChild, pendingMessage, pendingTool])
+
+    const parent = sessions.get('test-session-001')
+    expect(sessions.has(childSessionID)).toBe(false)
+    expect(parent?.messages.has(`${childSessionID}:msg-child-user-001`)).toBe(true)
+    expect(parent?.tools.get('Read')).toBe(1)
+
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
+    expect(mockWriter.writeSession.mock.calls[0][0].sessionId).toBe('test-session-001')
+  })
+
   it('removes deleted messages from the next checkpoint', async () => {
     const { handler } = createHandler()
     await handler({ event: sessionCreatedEvent })
@@ -236,6 +277,38 @@ describe('createEventHandler', () => {
     await handler({ event: sessionIdleEvent })
 
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBe(0)
+  })
+
+  it('removes related text, tool calls, and tool-part indexes with a message', async () => {
+    const { handler, sessions } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: messagePartUpdatedEvent })
+
+    const acc = sessions.get('test-session-001')!
+    const toolCallKey = 'test-session-001:call-tool-001'
+    const toolPartKey = 'test-session-001:part-tool-001'
+    acc.toolCalls.set(toolCallKey, {
+      sessionId: 'test-session-001',
+      callId: 'call-tool-001',
+      toolName: 'Read',
+      args: {},
+      messageId: 'msg-user-001',
+      partId: 'part-tool-001',
+    })
+    acc.toolPartIndex.set(toolPartKey, toolCallKey)
+
+    await handler({
+      event: {
+        type: 'message.removed',
+        properties: { sessionID: 'test-session-001', messageID: 'msg-user-001' },
+      },
+    })
+
+    expect(acc.messages.has('test-session-001:msg-user-001')).toBe(false)
+    expect(acc.textParts.has('test-session-001:part-text-001')).toBe(false)
+    expect(acc.toolCalls.has(toolCallKey)).toBe(false)
+    expect(acc.toolPartIndex.has(toolPartKey)).toBe(false)
   })
 
   it('rewrites a persisted checkpoint when a generated title arrives late', async () => {
