@@ -149,6 +149,7 @@ interface ToolCallSnapshot {
 
 type ToolCallKey = string | symbol
 type SnapshotSource = 'hydrated' | 'live'
+type RootMetadataField = 'title' | 'startedAt' | 'endedAt' | 'sessionModel'
 
 // Mutable state accumulated across events for a single session.
 // Converted to ParsedSessionData and checkpointed on lifecycle events.
@@ -168,6 +169,7 @@ interface SessionAccumulator {
   liveToolCallKeys: Set<ToolCallKey>
   messageTombstones: Set<string>
   partTombstones: Set<string>
+  liveRootMetadataFields: Set<RootMetadataField>
   legacySkills: Set<string>
   dirty: boolean
   persisted: boolean
@@ -204,6 +206,7 @@ export function createAccumulator(sessionId: string, project = 'unknown'): Sessi
     liveToolCallKeys: new Set(),
     messageTombstones: new Set(),
     partTombstones: new Set(),
+    liveRootMetadataFields: new Set(),
     legacySkills: new Set(),
     dirty: false,
     persisted: false,
@@ -376,15 +379,23 @@ export function createEventHandler(deps: EventHandlerDeps) {
   ): void {
     const partKey = value.partId ? keyed(value.sessionId, value.partId) : null
     if (source === 'hydrated' && (
-      acc.liveToolCallKeys.has(callKey)
-      || (partKey !== null && acc.partTombstones.has(partKey))
+      (partKey !== null && (acc.livePartKeys.has(partKey) || acc.partTombstones.has(partKey)))
       || (value.messageId !== null && acc.messageTombstones.has(keyed(value.sessionId, value.messageId)))
     )) return
+    const existing = acc.toolCalls.get(callKey)
+    if (source === 'hydrated' && acc.liveToolCallKeys.has(callKey) && existing) {
+      const messageId = existing.messageId ?? value.messageId
+      const partId = existing.partId ?? value.partId
+      acc.toolCalls.set(callKey, { ...existing, messageId, partId })
+      if (partId) acc.toolPartIndex.set(keyed(value.sessionId, partId), callKey)
+      acc.dirty = true
+      return
+    }
     if (source === 'live') {
       acc.liveToolCallKeys.add(callKey)
       if (partKey !== null) acc.partTombstones.delete(partKey)
     }
-    acc.toolCalls.set(callKey, { ...acc.toolCalls.get(callKey), ...value })
+    acc.toolCalls.set(callKey, { ...existing, ...value })
     if (partKey !== null) acc.toolPartIndex.set(partKey, callKey)
     acc.dirty = true
   }
@@ -477,12 +488,25 @@ export function createEventHandler(deps: EventHandlerDeps) {
     }
   }
 
-  function applyRootMetadata(acc: SessionAccumulator, info: Record<string, any>): void {
-    if (info.title !== undefined) acc.title = String(info.title)
-    if (info.time?.created !== undefined) acc.startedAt = Number(info.time.created)
-    if (info.time?.updated !== undefined) acc.endedAt = Number(info.time.updated)
-    if (info.model?.id) acc.sessionModel = String(info.model.id)
-    else if (info.modelID) acc.sessionModel = String(info.modelID)
+  function applyRootMetadata(
+    acc: SessionAccumulator,
+    info: Record<string, any>,
+    source: SnapshotSource,
+  ): void {
+    function assign(field: RootMetadataField, value: string | number | null): void {
+      if (source === 'hydrated' && acc.liveRootMetadataFields.has(field)) return
+      if (field === 'title') acc.title = value as string
+      else if (field === 'startedAt') acc.startedAt = value as number
+      else if (field === 'endedAt') acc.endedAt = value as number
+      else acc.sessionModel = value as string | null
+      if (source === 'live') acc.liveRootMetadataFields.add(field)
+    }
+
+    if (info.title !== undefined) assign('title', String(info.title))
+    if (info.time?.created !== undefined) assign('startedAt', Number(info.time.created))
+    if (info.time?.updated !== undefined) assign('endedAt', Number(info.time.updated))
+    if (info.model?.id) assign('sessionModel', String(info.model.id))
+    else if (info.modelID) assign('sessionModel', String(info.modelID))
     acc.dirty = true
   }
 
@@ -547,7 +571,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
     }
     for (const { sessionID } of nodes.slice(1)) childToParent.set(sessionID, rootSessionID)
     if (observedSessionID !== rootSessionID) childToParent.set(observedSessionID, rootSessionID)
-    applyRootMetadata(acc, tree.info)
+    applyRootMetadata(acc, tree.info, 'hydrated')
     for (const { sessionID, node } of nodes) {
       for (const message of node.messages) putMessageSnapshot(acc, sessionID, message.info, 'hydrated')
     }
@@ -655,7 +679,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
               const titleChanged = info?.title !== undefined
                 && String(info.title) !== acc.title
                 && !isDefaultSessionTitle(String(info.title))
-              if (info) applyRootMetadata(acc, info)
+              if (info) applyRootMetadata(acc, info, 'live')
               if (event.type === 'session.updated' && acc.persisted && titleChanged) {
                 await checkpoint(acc)
               }

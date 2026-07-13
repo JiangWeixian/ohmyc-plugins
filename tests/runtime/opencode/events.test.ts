@@ -199,6 +199,83 @@ describe('createEventHandler', () => {
     })
   })
 
+  it('keeps live root metadata over a stale hydrated snapshot', async () => {
+    const staleTree = {
+      info: { id: 'test-session-001', title: 'Old title', model: { id: 'old-model' }, time: { created: 1, updated: 2 } },
+      messages: [],
+      children: [],
+    }
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(staleTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: {
+      type: 'session.updated',
+      properties: {
+        sessionID: 'test-session-001',
+        info: {
+          id: 'test-session-001',
+          title: 'New title',
+          model: { id: 'new-model' },
+          time: { created: 999, updated: 1_000 },
+        },
+      },
+    } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: 'New title',
+      model: 'new-model',
+      startedAt: 999,
+    })
+  })
+
+  it('keeps live tool arguments while hydrating its persisted linkage', async () => {
+    const staleTree = {
+      info: { id: 'test-session-001', title: 'Stale title', time: { created: 1, updated: 2 } },
+      messages: [{
+        info: { id: 'stale-assistant', sessionID: 'test-session-001', role: 'assistant', time: { created: 10 } },
+        parts: [{
+          id: 'persisted-tool-part',
+          sessionID: 'test-session-001',
+          messageID: 'stale-assistant',
+          type: 'tool',
+          callID: 'shared-call',
+          tool: 'Read',
+          state: { input: { filePath: '/stale' } },
+        }],
+      }],
+      children: [],
+    }
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(staleTree)
+    const { handler, sessions, toolExecuteBefore } = createHandler({ loadSessionTree })
+
+    await toolExecuteBefore(
+      { sessionID: 'test-session-001', tool: 'Read', callID: 'shared-call' },
+      { args: { filePath: '/live' } },
+    )
+    await handler({ event: sessionIdleEvent })
+
+    const acc = sessions.get('test-session-001')!
+    expect(acc.toolCalls.get('test-session-001:shared-call')).toMatchObject({
+      args: { filePath: '/live' },
+      messageId: 'stale-assistant',
+      partId: 'persisted-tool-part',
+    })
+    expect(acc.toolPartIndex.get('test-session-001:persisted-tool-part')).toBe('test-session-001:shared-call')
+
+    await handler({ event: {
+      type: 'message.part.removed',
+      properties: { sessionID: 'test-session-001', messageID: 'stale-assistant', partID: 'persisted-tool-part' },
+    } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([])
+  })
+
   it('does not resurrect a message or its parts after a failed hydration removal', async () => {
     const staleTree = {
       info: { id: 'test-session-001', title: 'Stale title', time: { created: 1, updated: 2 } },
