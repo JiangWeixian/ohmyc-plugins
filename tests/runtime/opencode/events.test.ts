@@ -127,6 +127,127 @@ describe('createEventHandler', () => {
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBeGreaterThanOrEqual(2)
   })
 
+  it('migrates failed child event state into the discovered root accumulator', async () => {
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(hydratedTree)
+    const { handler, sessions, toolExecuteBefore } = createHandler({ loadSessionTree })
+    const liveChildMessage = {
+      type: 'message.updated',
+      properties: {
+        sessionID: 'child-session-001',
+        info: {
+          id: 'live-child-user',
+          sessionID: 'child-session-001',
+          role: 'user',
+          time: { created: 40 },
+        },
+      },
+    }
+
+    await handler({ event: liveChildMessage })
+    await toolExecuteBefore({ sessionID: 'child-session-001', tool: 'Read', callID: 'live-child-call' }, { args: {} })
+    await handler({ event: sessionIdleEvent })
+
+    const written = mockWriter.writeSession.mock.calls.at(-1)![0]
+    expect(sessions.has('child-session-001')).toBe(false)
+    expect(sessions.get('test-session-001')?.messages.has('child-session-001:live-child-user')).toBe(true)
+    expect(written).toMatchObject({ sessionId: 'test-session-001', turns: 3 })
+    expect(written.tools).toEqual([{ toolName: 'Read', callCount: 2 }])
+  })
+
+  it('keeps a live message update over a stale hydrated snapshot', async () => {
+    const staleTree = {
+      info: { id: 'test-session-001', title: 'Stale title', time: { created: 1, updated: 2 } },
+      messages: [{
+        info: {
+          id: 'same-assistant',
+          sessionID: 'test-session-001',
+          role: 'assistant',
+          time: { created: 10 },
+          tokens: { input: 100, output: 1, cache: { read: 0, write: 0 } },
+        },
+        parts: [],
+      }],
+      children: [],
+    }
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(staleTree)
+    const { handler } = createHandler({ loadSessionTree })
+    const liveMessage = {
+      type: 'message.updated',
+      properties: {
+        sessionID: 'test-session-001',
+        info: {
+          id: 'same-assistant',
+          sessionID: 'test-session-001',
+          role: 'assistant',
+          time: { created: 10 },
+          tokens: { input: 999, output: 9, cache: { read: 0, write: 0 } },
+        },
+      },
+    }
+
+    await handler({ event: liveMessage })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      tokensInput: 999,
+      tokensOutput: 9,
+    })
+  })
+
+  it('does not resurrect a message or its parts after a failed hydration removal', async () => {
+    const staleTree = {
+      info: { id: 'test-session-001', title: 'Stale title', time: { created: 1, updated: 2 } },
+      messages: [{
+        info: { id: 'stale-user', sessionID: 'test-session-001', role: 'user', time: { created: 10 } },
+        parts: [
+          { id: 'stale-text', sessionID: 'test-session-001', messageID: 'stale-user', type: 'text', text: 'Stale prompt' },
+          { id: 'stale-tool', sessionID: 'test-session-001', messageID: 'stale-user', type: 'tool', callID: 'stale-call', tool: 'Read', state: { input: {} } },
+        ],
+      }],
+      children: [],
+    }
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(staleTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: {
+      type: 'message.removed',
+      properties: { sessionID: 'test-session-001', messageID: 'stale-user' },
+    } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({ turns: 0, tools: [] })
+  })
+
+  it('does not resurrect a removed tool part after a failed hydration', async () => {
+    const staleTree = {
+      info: { id: 'test-session-001', title: 'Stale title', time: { created: 1, updated: 2 } },
+      messages: [{
+        info: { id: 'stale-assistant', sessionID: 'test-session-001', role: 'assistant', time: { created: 10 } },
+        parts: [{ id: 'stale-tool', sessionID: 'test-session-001', messageID: 'stale-assistant', type: 'tool', callID: 'stale-call', tool: 'Read', state: { input: {} } }],
+      }],
+      children: [],
+    }
+    const loadSessionTree = vi.fn()
+      .mockRejectedValueOnce(new Error('temporary'))
+      .mockResolvedValue(staleTree)
+    const { handler } = createHandler({ loadSessionTree })
+
+    await handler({ event: {
+      type: 'message.part.removed',
+      properties: { sessionID: 'test-session-001', messageID: 'stale-assistant', partID: 'stale-tool' },
+    } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([])
+  })
+
   it('does not hydrate a session created by the current process', async () => {
     const loadSessionTree = vi.fn().mockResolvedValue(hydratedTree)
     const { handler } = createHandler({ loadSessionTree })

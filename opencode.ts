@@ -148,6 +148,7 @@ interface ToolCallSnapshot {
 }
 
 type ToolCallKey = string | symbol
+type SnapshotSource = 'hydrated' | 'live'
 
 // Mutable state accumulated across events for a single session.
 // Converted to ParsedSessionData and checkpointed on lifecycle events.
@@ -162,6 +163,11 @@ interface SessionAccumulator {
   textParts: Map<string, TextPartSnapshot>
   toolCalls: Map<ToolCallKey, ToolCallSnapshot>
   toolPartIndex: Map<string, ToolCallKey>
+  liveMessageKeys: Set<string>
+  livePartKeys: Set<string>
+  liveToolCallKeys: Set<ToolCallKey>
+  messageTombstones: Set<string>
+  partTombstones: Set<string>
   legacySkills: Set<string>
   dirty: boolean
   persisted: boolean
@@ -193,6 +199,11 @@ export function createAccumulator(sessionId: string, project = 'unknown'): Sessi
     textParts: new Map(),
     toolCalls: new Map(),
     toolPartIndex: new Map(),
+    liveMessageKeys: new Set(),
+    livePartKeys: new Set(),
+    liveToolCallKeys: new Set(),
+    messageTombstones: new Set(),
+    partTombstones: new Set(),
     legacySkills: new Set(),
     dirty: false,
     persisted: false,
@@ -361,9 +372,20 @@ export function createEventHandler(deps: EventHandlerDeps) {
     acc: SessionAccumulator,
     value: ToolCallSnapshot,
     callKey: ToolCallKey = keyed(value.sessionId, value.callId),
+    source: SnapshotSource = 'live',
   ): void {
+    const partKey = value.partId ? keyed(value.sessionId, value.partId) : null
+    if (source === 'hydrated' && (
+      acc.liveToolCallKeys.has(callKey)
+      || (partKey !== null && acc.partTombstones.has(partKey))
+      || (value.messageId !== null && acc.messageTombstones.has(keyed(value.sessionId, value.messageId)))
+    )) return
+    if (source === 'live') {
+      acc.liveToolCallKeys.add(callKey)
+      if (partKey !== null) acc.partTombstones.delete(partKey)
+    }
     acc.toolCalls.set(callKey, { ...acc.toolCalls.get(callKey), ...value })
-    if (value.partId) acc.toolPartIndex.set(keyed(value.sessionId, value.partId), callKey)
+    if (partKey !== null) acc.toolPartIndex.set(partKey, callKey)
     acc.dirty = true
   }
 
@@ -373,9 +395,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
       : {}
   }
 
-  function putMessageSnapshot(acc: SessionAccumulator, sessionID: string, info: any): void {
+  function putMessageSnapshot(
+    acc: SessionAccumulator,
+    sessionID: string,
+    info: any,
+    source: SnapshotSource = 'live',
+  ): void {
     if (!info || (info.role !== 'user' && info.role !== 'assistant') || info.id === undefined) return
 
+    const messageKey = keyed(sessionID, String(info.id))
+    if (source === 'hydrated' && (acc.liveMessageKeys.has(messageKey) || acc.messageTombstones.has(messageKey))) return
     const cache = info.tokens?.cache
     const snapshot: MessageSnapshot = {
       sessionId: sessionID,
@@ -389,12 +418,28 @@ export function createEventHandler(deps: EventHandlerDeps) {
         cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
       },
     }
-    acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
+    if (source === 'live') {
+      acc.liveMessageKeys.add(messageKey)
+      acc.messageTombstones.delete(messageKey)
+    }
+    acc.messages.set(messageKey, snapshot)
     acc.dirty = true
   }
 
-  function putPartSnapshot(acc: SessionAccumulator, sessionID: string, part: any): void {
+  function putPartSnapshot(
+    acc: SessionAccumulator,
+    sessionID: string,
+    part: any,
+    source: SnapshotSource = 'live',
+  ): void {
     if (part?.type === 'text' && part.id !== undefined && part.messageID !== undefined) {
+      const partKey = keyed(sessionID, String(part.id))
+      const messageKey = keyed(sessionID, String(part.messageID))
+      if (source === 'hydrated' && (
+        acc.livePartKeys.has(partKey)
+        || acc.partTombstones.has(partKey)
+        || acc.messageTombstones.has(messageKey)
+      )) return
       const snapshot: TextPartSnapshot = {
         sessionId: sessionID,
         partId: String(part.id),
@@ -403,9 +448,24 @@ export function createEventHandler(deps: EventHandlerDeps) {
         synthetic: Boolean(part.synthetic),
         ignored: Boolean(part.ignored),
       }
-      acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
+      if (source === 'live') {
+        acc.livePartKeys.add(partKey)
+        acc.partTombstones.delete(partKey)
+      }
+      acc.textParts.set(partKey, snapshot)
       acc.dirty = true
     } else if (part?.type === 'tool' && part.id !== undefined && part.callID !== undefined && part.tool !== undefined) {
+      const partKey = keyed(sessionID, String(part.id))
+      const messageKey = part.messageID === undefined ? null : keyed(sessionID, String(part.messageID))
+      if (source === 'hydrated' && (
+        acc.livePartKeys.has(partKey)
+        || acc.partTombstones.has(partKey)
+        || (messageKey !== null && acc.messageTombstones.has(messageKey))
+      )) return
+      if (source === 'live') {
+        acc.livePartKeys.add(partKey)
+        acc.partTombstones.delete(partKey)
+      }
       putToolCall(acc, {
         sessionId: sessionID,
         callId: String(part.callID),
@@ -413,7 +473,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
         args: getArgs(part.state?.input),
         messageId: part.messageID === undefined ? null : String(part.messageID),
         partId: String(part.id),
-      })
+      }, keyed(sessionID, String(part.callID)), source)
     }
   }
 
@@ -439,19 +499,61 @@ export function createEventHandler(deps: EventHandlerDeps) {
     return nodes
   }
 
-  function mergeHydratedTree(tree: HydratedSessionNode): string {
+  function mergeAccumulator(target: SessionAccumulator, source: SessionAccumulator): void {
+    for (const [key, value] of source.messages) {
+      if (!target.messages.has(key)) target.messages.set(key, value)
+    }
+    for (const [key, value] of source.textParts) {
+      if (!target.textParts.has(key)) target.textParts.set(key, value)
+    }
+    for (const [key, value] of source.toolCalls) {
+      if (!target.toolCalls.has(key)) target.toolCalls.set(key, value)
+    }
+    for (const [key, value] of source.toolPartIndex) {
+      if (!target.toolPartIndex.has(key)) target.toolPartIndex.set(key, value)
+    }
+    for (const key of source.liveMessageKeys) target.liveMessageKeys.add(key)
+    for (const key of source.livePartKeys) target.livePartKeys.add(key)
+    for (const key of source.liveToolCallKeys) target.liveToolCallKeys.add(key)
+    for (const key of source.messageTombstones) target.messageTombstones.add(key)
+    for (const key of source.partTombstones) target.partTombstones.add(key)
+    for (const skill of source.legacySkills) target.legacySkills.add(skill)
+    target.dirty ||= source.dirty
+    target.persisted ||= source.persisted
+  }
+
+  function clearSessionTombstones(acc: SessionAccumulator, sessionID: string): void {
+    const prefix = `${sessionID}:`
+    for (const key of acc.messageTombstones) {
+      if (key.startsWith(prefix)) acc.messageTombstones.delete(key)
+    }
+    for (const key of acc.partTombstones) {
+      if (key.startsWith(prefix)) acc.partTombstones.delete(key)
+    }
+  }
+
+  function mergeHydratedTree(tree: HydratedSessionNode, observedSessionID: string): string {
     const nodes = collectHydratedNodes(tree)
     const rootSessionID = nodes[0].sessionID
     const acc = getAccumulator(rootSessionID)
 
+    const migratedSessionIDs = new Set([...nodes.map(({ sessionID }) => sessionID), observedSessionID])
+    for (const sessionID of migratedSessionIDs) {
+      const source = sessions.get(sessionID)
+      if (source && source !== acc) {
+        mergeAccumulator(acc, source)
+        sessions.delete(sessionID)
+      }
+    }
     for (const { sessionID } of nodes.slice(1)) childToParent.set(sessionID, rootSessionID)
+    if (observedSessionID !== rootSessionID) childToParent.set(observedSessionID, rootSessionID)
     applyRootMetadata(acc, tree.info)
     for (const { sessionID, node } of nodes) {
-      for (const message of node.messages) putMessageSnapshot(acc, sessionID, message.info)
+      for (const message of node.messages) putMessageSnapshot(acc, sessionID, message.info, 'hydrated')
     }
     for (const { sessionID, node } of nodes) {
       for (const message of node.messages) {
-        for (const part of message.parts) putPartSnapshot(acc, sessionID, part)
+        for (const part of message.parts) putPartSnapshot(acc, sessionID, part, 'hydrated')
       }
     }
     acc.hydrated = true
@@ -469,7 +571,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
     if (existing) return existing
 
     const hydration = deps.loadSessionTree(sessionID)
-      .then((tree) => mergeHydratedTree(tree))
+      .then((tree) => mergeHydratedTree(tree, sessionID))
       .catch((error) => {
         deps.log('warn', 'OpenCode session hydration failed', {
           sessionID,
@@ -572,6 +674,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
             case 'session.deleted': {
               if (isChild(sessionID)) {
+                clearSessionTombstones(acc, sessionID)
                 childToParent.delete(sessionID)
                 return
               }
@@ -614,9 +717,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
               const partKey = keyed(sessionID, String(partID))
               const callKey = acc.toolPartIndex.get(partKey)
-              if (callKey) acc.toolCalls.delete(callKey)
+              if (callKey) {
+                acc.toolCalls.delete(callKey)
+                acc.liveToolCallKeys.delete(callKey)
+              }
               acc.toolPartIndex.delete(partKey)
               acc.textParts.delete(partKey)
+              acc.livePartKeys.delete(partKey)
+              acc.partTombstones.add(partKey)
               acc.dirty = true
               break
             }
@@ -626,21 +734,32 @@ export function createEventHandler(deps: EventHandlerDeps) {
               if (messageID === undefined) break
 
               const normalizedMessageID = String(messageID)
-              let removed = acc.messages.delete(keyed(sessionID, normalizedMessageID))
+              const messageKey = keyed(sessionID, normalizedMessageID)
+              let removed = acc.messages.delete(messageKey)
+              acc.liveMessageKeys.delete(messageKey)
+              acc.messageTombstones.add(messageKey)
               for (const [partKey, part] of acc.textParts) {
                 if (part.sessionId === sessionID && part.messageId === normalizedMessageID) {
                   acc.textParts.delete(partKey)
+                  acc.livePartKeys.delete(partKey)
+                  acc.partTombstones.add(partKey)
                   removed = true
                 }
               }
               for (const [callKey, call] of acc.toolCalls) {
                 if (call.sessionId === sessionID && call.messageId === normalizedMessageID) {
                   acc.toolCalls.delete(callKey)
-                  if (call.partId) acc.toolPartIndex.delete(keyed(sessionID, call.partId))
+                  acc.liveToolCallKeys.delete(callKey)
+                  if (call.partId) {
+                    const partKey = keyed(sessionID, call.partId)
+                    acc.toolPartIndex.delete(partKey)
+                    acc.livePartKeys.delete(partKey)
+                    acc.partTombstones.add(partKey)
+                  }
                   removed = true
                 }
               }
-              if (removed) acc.dirty = true
+              acc.dirty = removed || acc.messageTombstones.has(messageKey)
               break
             }
           }
