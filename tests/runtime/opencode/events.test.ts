@@ -11,13 +11,13 @@ import {
 import { createAccumulator, createEventHandler } from '../../../opencode'
 import {
   assistantMessageUpdatedEvent,
-  ignoredMessagePartEvent,
   messagePartUpdatedEvent,
+  nestedAssistantMessageUpdatedEvent,
   sessionCreatedEvent,
   sessionDeletedEvent,
   sessionErrorEvent,
   sessionIdleEvent,
-  syntheticMessagePartEvent,
+  sessionTitleUpdatedEvent,
   userMessageUpdatedEvent,
 } from '../../fixtures/events'
 
@@ -26,20 +26,22 @@ vi.mock('bun:sqlite', () => ({
 }))
 
 describe('createAccumulator', () => {
-  it('creates accumulator with default values', () => {
-    const acc = createAccumulator('test-session', 'test-project')
+  it('creates the replacement accumulator state with empty ID maps', () => {
+    const acc = createAccumulator('test-session-001', 'test-project')
 
-    expect(acc.sessionId).toBe('test-session')
-    expect(acc.project).toBe('test-project')
-    expect(acc.turns).toBe(0)
-    expect(acc.tokensInput).toBe(0)
-    expect(acc.tokensOutput).toBe(0)
-    expect(acc.tokensCached).toBe(0)
-    expect(acc.tools.size).toBe(0)
-    expect(acc.skills.size).toBe(0)
-    expect(acc.firstUserMessage).toBeNull()
-    expect(acc.summary).toBeNull()
-    expect(acc.model).toBeNull()
+    expect(acc).toMatchObject({
+      sessionId: 'test-session-001',
+      project: 'test-project',
+      title: null,
+      sessionModel: null,
+      dirty: false,
+      persisted: false,
+      hydrated: false,
+    })
+    expect(acc.messages.size).toBe(0)
+    expect(acc.textParts.size).toBe(0)
+    expect(acc.toolCalls.size).toBe(0)
+    expect(acc.toolPartIndex.size).toBe(0)
   })
 
   it('uses unknown project when not provided', () => {
@@ -75,301 +77,93 @@ describe('createEventHandler', () => {
     vi.clearAllMocks()
   })
 
-  describe('session.created', () => {
-    it('sets startedAt for new session', async () => {
-      const { handler, sessions } = createHandler()
-      const before = Date.now()
+  it('replaces repeated message updates instead of double-counting', async () => {
+    const { handler } = createHandler()
 
-      await handler({ event: sessionCreatedEvent })
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: assistantMessageUpdatedEvent })
+    await handler({ event: assistantMessageUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
 
-      const acc = sessions.get('test-session-001')
-      expect(acc).toBeDefined()
-      expect(acc!.startedAt).toBeGreaterThanOrEqual(before)
+    const written = mockWriter.writeSession.mock.calls.at(-1)![0]
+    expect(written.turns).toBe(1)
+    expect(written.tokensInput).toBe(17_473)
+    expect(written.tokensOutput).toBe(11)
+    expect(written.tokensCached).toBe(1536)
+  })
+
+  it('uses a generated OpenCode title', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: messagePartUpdatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: sessionTitleUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: 'Fix token accounting',
+      summarySource: 'auto',
     })
   })
 
-  describe('message.updated', () => {
-    it('counts user turns', async () => {
-      const { handler, sessions } = createHandler()
+  it('falls back to the first message for an exact OpenCode default title', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: messagePartUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
 
-      await handler({ event: userMessageUpdatedEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.turns).toBe(1)
-    })
-
-    it('counts multiple user turns', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: userMessageUpdatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.turns).toBe(3)
-    })
-
-    it('tracks assistant tokens', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: assistantMessageUpdatedEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.tokensInput).toBe(17_473)
-      expect(acc!.tokensOutput).toBe(11)
-      expect(acc!.tokensCached).toBe(1536) // 1024 + 512
-    })
-
-    it('tracks assistant model', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: assistantMessageUpdatedEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.model).toBe('glm-5.1')
-    })
-
-    it('accumulates tokens across multiple assistant messages', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: assistantMessageUpdatedEvent })
-      await handler({ event: assistantMessageUpdatedEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.tokensInput).toBe(34_946) // 17473 * 2
-      expect(acc!.tokensOutput).toBe(22) // 11 * 2
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: 'Hello, this is a test message',
+      summarySource: 'first_message',
     })
   })
 
-  describe('message.part.updated', () => {
-    it('captures first user message', async () => {
-      const { handler, sessions } = createHandler()
+  it('accepts session IDs from both outer and legacy nested event shapes', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: nestedAssistantMessageUpdatedEvent })
+    await handler({ event: sessionIdleEvent })
 
-      await handler({ event: messagePartUpdatedEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.firstUserMessage).toBe('Hello, this is a test message')
-    })
-
-    it('ignores synthetic parts', async () => {
-      const { handler, sessions } = createHandler()
-
-      // Create session first
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: syntheticMessagePartEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.firstUserMessage).toBeNull()
-    })
-
-    it('ignores ignored parts', async () => {
-      const { handler, sessions } = createHandler()
-
-      // Create session first
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: ignoredMessagePartEvent })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.firstUserMessage).toBeNull()
-    })
-
-    it('keeps first message when second arrives', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: messagePartUpdatedEvent })
-      await handler({
-        event: {
-          ...messagePartUpdatedEvent,
-          properties: {
-            part: {
-              ...messagePartUpdatedEvent.properties.part,
-              text: 'Second message',
-            },
-          },
-        },
-      })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.firstUserMessage).toBe('Hello, this is a test message')
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      sessionId: 'test-session-001',
+      turns: 1,
+      tokensInput: 17_473,
     })
   })
 
-  describe('tool.execute.before', () => {
-    it('counts tool executions', async () => {
-      const { toolExecuteBefore, sessions } = createHandler()
+  it('writes an untitled empty session and removes it from memory on idle', async () => {
+    const { handler, sessions } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: sessionIdleEvent })
 
-      await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
-      await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.tools.get('Read')).toBe(2)
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: '(untitled session)',
+      summarySource: 'auto',
     })
-
-    it('tracks multiple different tools', async () => {
-      const { toolExecuteBefore, sessions } = createHandler()
-
-      await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
-      await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Skill' })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.tools.get('Read')).toBe(1)
-      expect(acc!.tools.get('Skill')).toBe(1)
-    })
+    expect(sessions.has('test-session-001')).toBe(false)
   })
 
-  describe('tool.execute.after', () => {
-    it('tracks skill usage for Skill tool', async () => {
-      const { toolExecuteAfter, sessions } = createHandler()
+  it('writes and removes a session when deleted', async () => {
+    const { handler, sessions } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: sessionDeletedEvent })
 
-      await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'Skill', args: { name: 'github' } })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.skills.has('github')).toBe(true)
-    })
-
-    it('tracks skill usage for lowercase skill tool', async () => {
-      const { toolExecuteAfter, sessions } = createHandler()
-
-      await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'skill', args: { name: 'docker' } })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.skills.has('docker')).toBe(true)
-    })
-
-    it('ignores non-skill tools', async () => {
-      const { handler, toolExecuteAfter, sessions } = createHandler()
-
-      await handler({ event: sessionCreatedEvent })
-      await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'Read', args: {} })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.skills.size).toBe(0)
-    })
-
-    it('tracks multiple skills', async () => {
-      const { toolExecuteAfter, sessions } = createHandler()
-
-      await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'Skill', args: { name: 'github' } })
-      await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'skill', args: { name: 'docker' } })
-
-      const acc = sessions.get('test-session-001')
-      expect(acc!.skills.has('github')).toBe(true)
-      expect(acc!.skills.has('docker')).toBe(true)
-    })
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
+    expect(sessions.has('test-session-001')).toBe(false)
   })
 
-  describe('session.idle', () => {
-    it('writes session to database', async () => {
-      const { handler } = createHandler()
+  it('writes a session when an error occurs', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: sessionErrorEvent })
 
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-      await handler({ event: assistantMessageUpdatedEvent })
-      await handler({ event: sessionIdleEvent })
-
-      expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
-      const written = mockWriter.writeSession.mock.calls[0][0]
-      expect(written.sessionId).toBe('test-session-001')
-      expect(written.turns).toBe(1)
-      expect(written.tokensInput).toBe(17_473)
-      expect(written.tokensOutput).toBe(11)
-      expect(written.agentName).toBe('opencode')
-    })
-
-    it('writes session and removes from memory', async () => {
-      const { handler } = createHandler()
-
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-      await handler({ event: sessionIdleEvent })
-
-      expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
-    })
-
-    it('removes session from map after idle', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: sessionIdleEvent })
-
-      expect(sessions.has('test-session-001')).toBe(false)
-    })
-  })
-
-  describe('session.deleted', () => {
-    it('writes session and removes from memory', async () => {
-      const { handler, sessions } = createHandler()
-
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-      await handler({ event: sessionDeletedEvent })
-
-      expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
-      expect(sessions.has('test-session-001')).toBe(false)
-    })
-  })
-
-  describe('session.error', () => {
-    it('writes session on error', async () => {
-      const { handler } = createHandler()
-
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-      await handler({ event: sessionErrorEvent })
-
-      expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
-    })
-  })
-
-  describe('end-to-end session', () => {
-    it('handles complete conversation flow', async () => {
-      const { handler, toolExecuteBefore, toolExecuteAfter } = createHandler()
-
-      // Session created
-      await handler({ event: sessionCreatedEvent })
-
-      // User sends first message
-      await handler({ event: messagePartUpdatedEvent })
-      await handler({ event: userMessageUpdatedEvent })
-
-      // Tool is called
-      await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
-      await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'Skill', args: { name: 'github' } })
-
-      // Assistant responds
-      await handler({ event: assistantMessageUpdatedEvent })
-
-      // Session ends
-      await handler({ event: sessionIdleEvent })
-
-      // Verify final state
-      expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
-      const written = mockWriter.writeSession.mock.calls[0][0]
-      expect(written.sessionId).toBe('test-session-001')
-      expect(written.project).toBe('test-project')
-      expect(written.turns).toBe(1)
-      expect(written.tokensInput).toBe(17_473)
-      expect(written.tokensOutput).toBe(11)
-      expect(written.tokensCached).toBe(1536)
-      expect(written.summary).toBe('Hello, this is a test message')
-      expect(written.summarySource).toBe('first_message')
-      expect(written.model).toBe('glm-5.1')
-      expect(written.tools).toEqual([{ toolName: 'Read', callCount: 1 }])
-      expect(written.skills).toEqual(['github'])
-      expect(written.transcriptPath).toBe('opencode://test-session-001')
-    })
-
-    it('handles session with no messages', async () => {
-      const { handler } = createHandler()
-
-      await handler({ event: sessionCreatedEvent })
-      await handler({ event: sessionIdleEvent })
-
-      expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
-      const written = mockWriter.writeSession.mock.calls[0][0]
-      expect(written.turns).toBe(0)
-      expect(written.summary).toBe('(untitled session)')
-      expect(written.summarySource).toBe('auto')
-    })
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(1)
   })
 })

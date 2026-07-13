@@ -57,6 +57,33 @@ function ensureSchema(db: Database): void {
   db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('schema_version', String(CURRENT_SCHEMA_VERSION))
 }
 
+interface MessageSnapshot {
+  sessionId: string
+  messageId: string
+  role: 'user' | 'assistant'
+  createdAt: number
+  model: string | null
+  tokens: { input: number; output: number; cached: number }
+}
+
+interface TextPartSnapshot {
+  sessionId: string
+  partId: string
+  messageId: string
+  text: string
+  synthetic: boolean
+  ignored: boolean
+}
+
+interface ToolCallSnapshot {
+  sessionId: string
+  callId: string
+  toolName: string
+  args: Record<string, unknown>
+  messageId: string | null
+  partId: string | null
+}
+
 // Mutable state accumulated across events for a single session.
 // Converted to ParsedSessionData and flushed to SQLite on session.idle.
 interface SessionAccumulator {
@@ -64,33 +91,45 @@ interface SessionAccumulator {
   project: string
   startedAt: number
   endedAt: number
-  turns: number
-  tokensInput: number
-  tokensOutput: number
-  tokensCached: number
-  tools: Map<string, number> // tool name -> invocation count
-  skills: Set<string>
-  firstUserMessage: string | null
-  summary: string | null
-  model: string | null
+  title: string | null
+  sessionModel: string | null
+  messages: Map<string, MessageSnapshot>
+  textParts: Map<string, TextPartSnapshot>
+  toolCalls: Map<string, ToolCallSnapshot>
+  toolPartIndex: Map<string, string>
+  dirty: boolean
+  persisted: boolean
+  hydrated: boolean
+}
+
+// Mirrors OpenCode session/session.ts isDefaultTitle() for generated root/child titles.
+const defaultTitlePattern = /^(?:New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
+export function isDefaultSessionTitle(title: string | null | undefined): boolean {
+  return !title?.trim() || defaultTitlePattern.test(title)
+}
+
+function keyed(sessionId: string, id: string): string {
+  return `${sessionId}:${id}`
 }
 
 // Creates a fresh accumulator for a session. Exported for testing.
-export function createAccumulator(sessionId: string, project?: string): SessionAccumulator {
+export function createAccumulator(sessionId: string, project = 'unknown'): SessionAccumulator {
+  const now = Date.now()
   return {
     sessionId,
-    project: project ?? 'unknown',
-    startedAt: Date.now(),
-    endedAt: Date.now(),
-    turns: 0,
-    tokensInput: 0,
-    tokensOutput: 0,
-    tokensCached: 0,
-    tools: new Map(),
-    skills: new Set(),
-    firstUserMessage: null,
-    summary: null,
-    model: null,
+    project,
+    startedAt: now,
+    endedAt: now,
+    title: null,
+    sessionModel: null,
+    messages: new Map(),
+    textParts: new Map(),
+    toolCalls: new Map(),
+    toolPartIndex: new Map(),
+    dirty: false,
+    persisted: false,
+    hydrated: false,
   }
 }
 
@@ -105,6 +144,25 @@ function getProjectName(input: { project?: { worktree?: string }; directory?: st
 }
 
 function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
+  const messages = [...acc.messages.values()]
+  const userMessages = messages.filter((message) => message.role === 'user')
+  const assistantMessages = messages.filter((message) => message.role === 'assistant')
+  const firstRootUser = userMessages
+    .filter((message) => message.sessionId === acc.sessionId)
+    .sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))[0]
+  const firstText = [...acc.textParts.values()]
+    .filter((part) => part.sessionId === acc.sessionId && part.messageId === firstRootUser?.messageId)
+    .filter((part) => !part.synthetic && !part.ignored && part.text.trim())
+    .sort((a, b) => a.partId.localeCompare(b.partId))[0]?.text.trim()
+  const explicitTitle = isDefaultSessionTitle(acc.title) ? null : acc.title!.trim()
+  const summary = explicitTitle ?? firstText ?? '(untitled session)'
+  const tokensInput = assistantMessages.reduce((sum, message) => sum + message.tokens.input, 0)
+  const tokensOutput = assistantMessages.reduce((sum, message) => sum + message.tokens.output, 0)
+  const tokensCached = assistantMessages.reduce((sum, message) => sum + message.tokens.cached, 0)
+  const latestAssistant = assistantMessages
+    .sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))
+    .at(-1)
+
   return {
     sessionId: acc.sessionId,
     project: acc.project,
@@ -112,34 +170,28 @@ function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
     startedAt: acc.startedAt,
     endedAt: acc.endedAt,
     durationMs: acc.endedAt - acc.startedAt,
-    turns: acc.turns,
-    tokensInput: acc.tokensInput,
-    tokensOutput: acc.tokensOutput,
-    tokensCached: acc.tokensCached,
-    // Prefer explicit summary (e.g. from away_summary), then the
-    // first user message, then a placeholder for empty sessions.
-    summary: acc.summary ?? acc.firstUserMessage ?? '(untitled session)',
-    summarySource: acc.firstUserMessage ? 'first_message' : 'auto',
-    // OpenCode emits sessionID in two different shapes depending on
-    // the event type — check both locations.
+    turns: userMessages.length,
+    tokensInput,
+    tokensOutput,
+    tokensCached,
+    summary,
+    summarySource: explicitTitle || !firstText ? 'auto' : 'first_message',
     transcriptPath: `opencode://${acc.sessionId}`,
     fileSize: 0,
-    tools: [...acc.tools.entries()].map(([toolName, callCount]) => ({ toolName, callCount })),
-    skills: [...acc.skills],
-    model: acc.model,
+    tools: [],
+    skills: [],
+    model: latestAssistant?.model ?? acc.sessionModel,
   }
 }
 
 function getEventSessionID(event: any): string | undefined {
-  // session.created puts the id at properties.info.id; all other
-  // events use properties.sessionID.
-  if (event.properties?.sessionID) {
-    return event.properties.sessionID as string
-  }
-  if (event.properties?.info?.id) {
-    return event.properties.info.id as string
-  }
-  return undefined
+  const properties = event.properties
+  return properties?.sessionID
+    ?? properties?.info?.sessionID
+    ?? properties?.info?.session_id
+    ?? properties?.part?.sessionID
+    ?? properties?.part?.session_id
+    ?? properties?.info?.id
 }
 
 // Dependencies injected into createEventHandler. Exported for testing.
@@ -184,16 +236,24 @@ export function createEventHandler(deps: EventHandlerDeps) {
     handler: async ({ event }: { event: any }) => {
       try {
         switch (event.type) {
-          case 'session.created': {
+          case 'session.created':
+          case 'session.updated': {
             const sessionID = getEventSessionID(event)
             if (sessionID) {
-              const parentID = event.properties?.info?.parentID as string | undefined
+              const parentID = event.type === 'session.created'
+                ? event.properties?.info?.parentID as string | undefined
+                : undefined
               if (parentID) {
                 childToParent.set(sessionID, parentID)
                 deps.log('debug', 'Subagent session detected', { sessionID, parentID })
               }
               const acc = getAccumulator(sessionID)
-              acc.startedAt = Math.min(acc.startedAt, Date.now())
+              const info = event.properties?.info
+              if (info?.title !== undefined) acc.title = String(info.title)
+              if (info?.time?.created !== undefined) acc.startedAt = Number(info.time.created)
+              if (info?.time?.updated !== undefined) acc.endedAt = Number(info.time.updated)
+              if (info?.model?.id) acc.sessionModel = String(info.model.id)
+              acc.dirty = true
             }
             break
           }
@@ -263,44 +323,43 @@ export function createEventHandler(deps: EventHandlerDeps) {
             // OpenCode sends message metadata under either .info or
             // .message depending on the event variant — accept both.
             const info = event.properties?.info || event.properties?.message
-            if (info) {
-              // sessionID vs session_id: OpenCode versions differ on casing.
-              const sessionID = info.sessionID || info.session_id
-              if (sessionID) {
-                const acc = getAccumulator(sessionID)
-
-                if (info.role === 'user') {
-                  acc.turns += 1
-                }
-
-                if (info.role === 'assistant' && info.tokens) {
-                  acc.tokensInput += info.tokens.input || 0
-                  acc.tokensOutput += info.tokens.output || 0
-                  if (info.tokens.cache) {
-                    acc.tokensCached += (info.tokens.cache.read || 0) + (info.tokens.cache.write || 0)
-                  }
-                }
-
-                if (info.modelID) {
-                  acc.model = info.modelID
-                }
+            const sessionID = getEventSessionID(event)
+            if (info && sessionID && (info.role === 'user' || info.role === 'assistant') && info.id !== undefined) {
+              const cache = info.tokens?.cache
+              const snapshot: MessageSnapshot = {
+                sessionId: sessionID,
+                messageId: String(info.id),
+                role: info.role,
+                createdAt: Number(info.time?.created ?? Date.now()),
+                model: info.modelID ? String(info.modelID) : null,
+                tokens: {
+                  input: Number(info.tokens?.input ?? 0),
+                  output: Number(info.tokens?.output ?? 0),
+                  cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
+                },
               }
+              const acc = getAccumulator(sessionID)
+              acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
+              acc.dirty = true
             }
             break
           }
 
           case 'message.part.updated': {
-            // Only capture non-synthetic, non-ignored text parts as the
-            // user's first message (used as a fallback session summary).
             const part = event.properties?.part
-            if (part && part.type === 'text' && !part.synthetic && !part.ignored) {
-              const sessionID = part.sessionID || part.session_id
-              if (sessionID && part.text?.trim()) {
-                const acc = getAccumulator(sessionID)
-                if (!acc.firstUserMessage) {
-                  acc.firstUserMessage = part.text.trim()
-                }
+            const sessionID = getEventSessionID(event)
+            if (part && part.type === 'text' && sessionID && part.id !== undefined && part.messageID !== undefined) {
+              const snapshot: TextPartSnapshot = {
+                sessionId: sessionID,
+                partId: String(part.id),
+                messageId: String(part.messageID),
+                text: String(part.text ?? ''),
+                synthetic: Boolean(part.synthetic),
+                ignored: Boolean(part.ignored),
               }
+              const acc = getAccumulator(sessionID)
+              acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
+              acc.dirty = true
             }
             break
           }
@@ -312,8 +371,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
     toolExecuteBefore: async (hookInput: { sessionID: string; tool: string }) => {
       try {
-        const acc = getAccumulator(hookInput.sessionID)
-        acc.tools.set(hookInput.tool, (acc.tools.get(hookInput.tool) || 0) + 1)
+        void hookInput
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
       }
@@ -321,15 +379,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
     toolExecuteAfter: async (hookInput: { sessionID: string; tool: string; args: any }) => {
       try {
-        // Both "Skill" and "skill" are valid depending on the agent
-        // version — check both to avoid missing skill invocations.
-        if (hookInput.tool === 'Skill' || hookInput.tool === 'skill') {
-          const acc = getAccumulator(hookInput.sessionID)
-          const args = hookInput.args
-          if (args && typeof args === 'object' && typeof args.name === 'string') {
-            acc.skills.add(args.name)
-          }
-        }
+        void hookInput
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
       }
