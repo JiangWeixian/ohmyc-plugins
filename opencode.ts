@@ -84,6 +84,8 @@ interface ToolCallSnapshot {
   partId: string | null
 }
 
+type ToolCallKey = string | symbol
+
 // Mutable state accumulated across events for a single session.
 // Converted to ParsedSessionData and checkpointed on lifecycle events.
 interface SessionAccumulator {
@@ -95,8 +97,8 @@ interface SessionAccumulator {
   sessionModel: string | null
   messages: Map<string, MessageSnapshot>
   textParts: Map<string, TextPartSnapshot>
-  toolCalls: Map<string, ToolCallSnapshot>
-  toolPartIndex: Map<string, string>
+  toolCalls: Map<ToolCallKey, ToolCallSnapshot>
+  toolPartIndex: Map<string, ToolCallKey>
   legacySkills: Set<string>
   dirty: boolean
   persisted: boolean
@@ -242,19 +244,21 @@ export function createEventHandler(deps: EventHandlerDeps) {
     return true
   }
 
-  async function checkpoint(acc: SessionAccumulator): Promise<void> {
-    if (!canCheckpoint(acc)) return
+  async function checkpoint(acc: SessionAccumulator): Promise<boolean> {
+    if (!canCheckpoint(acc)) return false
     acc.endedAt = Date.now()
     try {
       deps.writer.writeSession(toParsedSessionData(acc))
       acc.persisted = true
       acc.dirty = false
+      return true
     } catch (error) {
       acc.dirty = true
       deps.log('error', 'Failed to write OpenCode checkpoint', {
         sessionID: acc.sessionId,
         error: error instanceof Error ? error.message : String(error),
       })
+      return false
     }
   }
 
@@ -288,8 +292,11 @@ export function createEventHandler(deps: EventHandlerDeps) {
     return childToParent.has(sessionId)
   }
 
-  function putToolCall(acc: SessionAccumulator, value: ToolCallSnapshot): void {
-    const callKey = keyed(value.sessionId, value.callId)
+  function putToolCall(
+    acc: SessionAccumulator,
+    value: ToolCallSnapshot,
+    callKey: ToolCallKey = keyed(value.sessionId, value.callId),
+  ): void {
     acc.toolCalls.set(callKey, { ...acc.toolCalls.get(callKey), ...value })
     if (value.partId) acc.toolPartIndex.set(keyed(value.sessionId, value.partId), callKey)
     acc.dirty = true
@@ -322,10 +329,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
     await enqueue(rootID, async () => {
       const acc = getAccumulator(hookInput.sessionID)
       await tryHydratingUnknownSession(hookInput.sessionID, acc)
-      const callID = typeof hookInput.callID === 'string' && hookInput.callID
+      const realCallID = typeof hookInput.callID === 'string' && hookInput.callID
         ? hookInput.callID
-        : `legacy-${++legacyCallCount}`
-      const existing = acc.toolCalls.get(keyed(hookInput.sessionID, callID))
+        : null
+      const callID = realCallID ?? `legacy-${++legacyCallCount}`
+      const callKey = realCallID
+        ? keyed(hookInput.sessionID, realCallID)
+        : Symbol(`legacy-tool-call:${callID}`)
+      const existing = acc.toolCalls.get(callKey)
       putToolCall(acc, {
         sessionId: hookInput.sessionID,
         callId: callID,
@@ -333,7 +344,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
         args,
         messageId: existing?.messageId ?? null,
         partId: existing?.partId ?? null,
-      })
+      }, callKey)
     })
   }
 
@@ -401,14 +412,14 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 return
               }
               const acc = sessions.get(sessionID)
-              if (acc) {
-                await checkpoint(acc)
-                if (!acc.dirty) sessions.delete(sessionID)
+              const checkpointed = acc ? await checkpoint(acc) : false
+              if (checkpointed) {
+                sessions.delete(sessionID)
+                for (const [childID, rootID] of childToParent) {
+                  if (rootID === sessionID) childToParent.delete(childID)
+                }
+                rootSessionIds.delete(sessionID)
               }
-              for (const [childID, rootID] of childToParent) {
-                if (rootID === sessionID) childToParent.delete(childID)
-              }
-              rootSessionIds.delete(sessionID)
               break
             }
 

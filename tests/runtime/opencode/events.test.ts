@@ -180,6 +180,16 @@ describe('createEventHandler', () => {
     })
   })
 
+  it('counts a legacy tool call separately from a matching real call ID', async () => {
+    const { handler, toolExecuteBefore } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
+    await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read', callID: 'legacy-1' })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([{ toolName: 'Read', callCount: 2 }])
+  })
+
   it('counts the same call ID once across hook and persisted part events', async () => {
     const { handler, sessions, toolExecuteBefore, toolExecuteAfter } = createHandler()
     await handler({ event: sessionCreatedEvent })
@@ -234,6 +244,21 @@ describe('createEventHandler', () => {
     expect(childToParent.has('child-session-001')).toBe(false)
   })
 
+  it('keeps root deletion state until dispose retries a failed checkpoint', async () => {
+    mockWriter.writeSession.mockImplementationOnce(() => { throw new Error('locked') })
+    const { childToParent, dispose, handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: childSessionCreatedEvent })
+    await handler({ event: sessionDeletedEvent })
+
+    expect(childToParent.get('child-session-001')).toBe('test-session-001')
+    await dispose()
+
+    expect(mockWriter.writeSession).toHaveBeenCalledTimes(2)
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].sessionId).toBe('test-session-001')
+    expect(mockLog.mock.calls.some(([, message]) => message === 'Skipped non-root OpenCode checkpoint')).toBe(false)
+  })
+
   it('never checkpoints a child or unresolved session ID', async () => {
     const loadSessionTree = vi.fn().mockRejectedValue(new Error('temporarily unavailable'))
     const { handler } = createHandler({ loadSessionTree })
@@ -244,15 +269,38 @@ describe('createEventHandler', () => {
     expect(mockWriter.writeSession).not.toHaveBeenCalled()
   })
 
+  it('skips unresolved event and tool state during dispose after hydration fails', async () => {
+    const loadSessionTree = vi.fn().mockRejectedValue(new Error('temporarily unavailable'))
+    const { dispose, handler, toolExecuteBefore } = createHandler({ loadSessionTree })
+    const unresolvedSessionID = 'unresolved-session-001'
+    await handler({
+      event: {
+        type: 'message.updated',
+        properties: {
+          sessionID: unresolvedSessionID,
+          info: { ...userMessageUpdatedEvent.properties.info, sessionID: unresolvedSessionID },
+        },
+      },
+    })
+    await toolExecuteBefore({ sessionID: unresolvedSessionID, tool: 'Read', callID: 'call-001' }, { args: {} })
+    await dispose()
+
+    expect(loadSessionTree).toHaveBeenCalledWith(unresolvedSessionID)
+    expect(mockWriter.writeSession).not.toHaveBeenCalled()
+    expect(mockLog).toHaveBeenCalledWith('warn', 'Skipped non-root OpenCode checkpoint', { sessionID: unresolvedSessionID })
+  })
+
   it('removes a deleted tool part from the next checkpoint', async () => {
     const { handler, sessions } = createHandler()
     await handler({ event: sessionCreatedEvent })
     await handler({ event: toolPartUpdatedEvent })
     expect(sessions.get('test-session-001')!.toolCalls.size).toBe(1)
+    expect(sessions.get('test-session-001')!.toolPartIndex.get('test-session-001:part-tool-001')).toBe('test-session-001:call-001')
     await handler({ event: {
       type: 'message.part.removed',
       properties: { sessionID: 'test-session-001', messageID: 'msg-assistant-001', partID: 'part-tool-001' },
     } })
+    expect(sessions.get('test-session-001')!.toolPartIndex.has('test-session-001:part-tool-001')).toBe(false)
     await handler({ event: sessionIdleEvent })
 
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([])
