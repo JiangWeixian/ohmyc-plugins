@@ -13,11 +13,13 @@ import {
   assistantMessageUpdatedEvent,
   messagePartUpdatedEvent,
   nestedAssistantMessageUpdatedEvent,
+  ignoredMessagePartEvent,
   sessionCreatedEvent,
   sessionDeletedEvent,
   sessionErrorEvent,
   sessionIdleEvent,
   sessionTitleUpdatedEvent,
+  syntheticMessagePartEvent,
   userMessageUpdatedEvent,
 } from '../../fixtures/events'
 
@@ -79,19 +81,29 @@ describe('createEventHandler', () => {
 
   it('replaces repeated message updates instead of double-counting', async () => {
     const { handler } = createHandler()
+    const updatedAssistantMessage = {
+      ...assistantMessageUpdatedEvent,
+      properties: {
+        ...assistantMessageUpdatedEvent.properties,
+        info: {
+          ...assistantMessageUpdatedEvent.properties.info,
+          tokens: { input: 20_000, output: 15, reasoning: 0, cache: { read: 2048, write: 256 } },
+        },
+      },
+    }
 
     await handler({ event: sessionCreatedEvent })
     await handler({ event: userMessageUpdatedEvent })
     await handler({ event: userMessageUpdatedEvent })
     await handler({ event: assistantMessageUpdatedEvent })
-    await handler({ event: assistantMessageUpdatedEvent })
+    await handler({ event: updatedAssistantMessage })
     await handler({ event: sessionIdleEvent })
 
     const written = mockWriter.writeSession.mock.calls.at(-1)![0]
     expect(written.turns).toBe(1)
-    expect(written.tokensInput).toBe(17_473)
-    expect(written.tokensOutput).toBe(11)
-    expect(written.tokensCached).toBe(1536)
+    expect(written.tokensInput).toBe(20_000)
+    expect(written.tokensOutput).toBe(15)
+    expect(written.tokensCached).toBe(2304)
   })
 
   it('uses a generated OpenCode title', async () => {
@@ -118,6 +130,47 @@ describe('createEventHandler', () => {
     expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
       summary: 'Hello, this is a test message',
       summarySource: 'first_message',
+    })
+  })
+
+  it('does not use synthetic text as a session summary', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: syntheticMessagePartEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: '(untitled session)',
+      summarySource: 'auto',
+    })
+  })
+
+  it('does not use ignored text as a session summary', async () => {
+    const { handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: userMessageUpdatedEvent })
+    await handler({ event: ignoredMessagePartEvent })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: '(untitled session)',
+      summarySource: 'auto',
+    })
+  })
+
+  it('writes collected tools and skills to the checkpoint', async () => {
+    const { handler, toolExecuteBefore, toolExecuteAfter } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
+    await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read' })
+    await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'Skill', args: { name: 'github' } })
+    await toolExecuteAfter({ sessionID: 'test-session-001', tool: 'skill', args: { name: 'docker' } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      tools: [{ toolName: 'Read', callCount: 2 }],
+      skills: ['github', 'docker'],
     })
   })
 

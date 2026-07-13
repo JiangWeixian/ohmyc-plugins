@@ -97,6 +97,8 @@ interface SessionAccumulator {
   textParts: Map<string, TextPartSnapshot>
   toolCalls: Map<string, ToolCallSnapshot>
   toolPartIndex: Map<string, string>
+  tools: Map<string, number>
+  skills: Set<string>
   dirty: boolean
   persisted: boolean
   hydrated: boolean
@@ -127,6 +129,8 @@ export function createAccumulator(sessionId: string, project = 'unknown'): Sessi
     textParts: new Map(),
     toolCalls: new Map(),
     toolPartIndex: new Map(),
+    tools: new Map(),
+    skills: new Set(),
     dirty: false,
     persisted: false,
     hydrated: false,
@@ -178,8 +182,8 @@ function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
     summarySource: explicitTitle || !firstText ? 'auto' : 'first_message',
     transcriptPath: `opencode://${acc.sessionId}`,
     fileSize: 0,
-    tools: [],
-    skills: [],
+    tools: [...acc.tools.entries()].map(([toolName, callCount]) => ({ toolName, callCount })),
+    skills: [...acc.skills],
     model: latestAssistant?.model ?? acc.sessionModel,
   }
 }
@@ -371,7 +375,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
     toolExecuteBefore: async (hookInput: { sessionID: string; tool: string }) => {
       try {
-        void hookInput
+        const acc = getAccumulator(hookInput.sessionID)
+        acc.tools.set(hookInput.tool, (acc.tools.get(hookInput.tool) || 0) + 1)
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
       }
@@ -379,7 +384,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
 
     toolExecuteAfter: async (hookInput: { sessionID: string; tool: string; args: any }) => {
       try {
-        void hookInput
+        // Both "Skill" and "skill" are valid depending on the agent
+        // version — check both to avoid missing skill invocations.
+        if (hookInput.tool === 'Skill' || hookInput.tool === 'skill') {
+          const acc = getAccumulator(hookInput.sessionID)
+          const args = hookInput.args
+          if (args && typeof args === 'object' && typeof args.name === 'string') {
+            acc.skills.add(args.name)
+          }
+        }
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
       }
