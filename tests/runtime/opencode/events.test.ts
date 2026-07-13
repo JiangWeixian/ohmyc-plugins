@@ -420,6 +420,73 @@ describe('createEventHandler', () => {
     })
   })
 
+  it.each([
+    { ignored: false, synthetic: true },
+    { ignored: true, synthetic: false },
+  ])('falls back to later usable root text after an $ignored ignored and $synthetic synthetic first message', async ({ ignored, synthetic }) => {
+    const { handler } = createHandler()
+    const earlyUser = {
+      ...userMessageUpdatedEvent,
+      properties: {
+        ...userMessageUpdatedEvent.properties,
+        info: {
+          ...userMessageUpdatedEvent.properties.info,
+          id: 'msg-user-early',
+          time: { created: 1 },
+        },
+      },
+    }
+    const earlyPart = {
+      ...messagePartUpdatedEvent,
+      properties: {
+        ...messagePartUpdatedEvent.properties,
+        part: {
+          ...messagePartUpdatedEvent.properties.part,
+          id: 'part-text-early',
+          messageID: 'msg-user-early',
+          text: 'Ignored first prompt',
+          ignored,
+          synthetic,
+        },
+      },
+    }
+    const laterUser = {
+      ...userMessageUpdatedEvent,
+      properties: {
+        ...userMessageUpdatedEvent.properties,
+        info: {
+          ...userMessageUpdatedEvent.properties.info,
+          id: 'msg-user-later',
+          time: { created: 2 },
+        },
+      },
+    }
+    const laterPart = {
+      ...messagePartUpdatedEvent,
+      properties: {
+        ...messagePartUpdatedEvent.properties,
+        part: {
+          ...messagePartUpdatedEvent.properties.part,
+          id: 'part-text-later',
+          messageID: 'msg-user-later',
+          text: 'Later usable prompt',
+        },
+      },
+    }
+
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: earlyUser })
+    await handler({ event: earlyPart })
+    await handler({ event: laterUser })
+    await handler({ event: laterPart })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      summary: 'Later usable prompt',
+      summarySource: 'first_message',
+    })
+  })
+
   it('does not use synthetic text as a session summary', async () => {
     const { handler } = createHandler()
     await handler({ event: sessionCreatedEvent })
@@ -496,6 +563,80 @@ describe('createEventHandler', () => {
     await handler({ event: sessionIdleEvent })
 
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([{ toolName: 'Read', callCount: 1 }])
+  })
+
+  it('reconciles the source-shaped task hook part ID with its persisted call ID', async () => {
+    const { handler, sessions, toolExecuteBefore } = createHandler()
+    const part = {
+      id: 'task-part-001',
+      sessionID: 'test-session-001',
+      messageID: 'msg-assistant-001',
+      type: 'tool',
+      callID: 'task-call-001',
+      tool: 'task',
+      state: { input: { prompt: 'persisted prompt' } },
+    }
+
+    await handler({ event: sessionCreatedEvent })
+    await toolExecuteBefore(
+      { sessionID: 'test-session-001', tool: 'task', callID: part.id },
+      { args: { prompt: 'live prompt' } },
+    )
+    await handler({ event: { type: 'message.part.updated', properties: { sessionID: 'test-session-001', part } } })
+
+    const acc = sessions.get('test-session-001')!
+    expect(acc.toolCalls).toEqual(new Map([['test-session-001:task-call-001', {
+      sessionId: 'test-session-001',
+      callId: 'task-call-001',
+      toolName: 'task',
+      args: { prompt: 'live prompt' },
+      messageId: 'msg-assistant-001',
+      partId: 'task-part-001',
+    }]]))
+    expect(acc.toolCalls.has('test-session-001:task-part-001')).toBe(false)
+    expect(acc.toolPartIndex.get('test-session-001:task-part-001')).toBe('test-session-001:task-call-001')
+
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([{ toolName: 'task', callCount: 1 }])
+  })
+
+  it('does not merge a regular hook call that collides with a task part ID', async () => {
+    const { handler, sessions, toolExecuteBefore } = createHandler()
+
+    await handler({ event: sessionCreatedEvent })
+    await toolExecuteBefore(
+      { sessionID: 'test-session-001', tool: 'Read', callID: 'task-part-001' },
+      { args: { filePath: '/tmp/unrelated' } },
+    )
+    await handler({ event: {
+      type: 'message.part.updated',
+      properties: {
+        sessionID: 'test-session-001',
+        part: {
+          id: 'task-part-001',
+          sessionID: 'test-session-001',
+          messageID: 'msg-assistant-001',
+          type: 'tool',
+          callID: 'task-call-001',
+          tool: 'task',
+          state: { input: { prompt: 'task prompt' } },
+        },
+      },
+    } })
+
+    const acc = sessions.get('test-session-001')!
+    expect(acc.toolCalls).toHaveLength(2)
+    expect(acc.toolCalls.get('test-session-001:task-part-001')).toMatchObject({
+      toolName: 'Read',
+      args: { filePath: '/tmp/unrelated' },
+      partId: null,
+    })
+    expect(acc.toolCalls.get('test-session-001:task-call-001')).toMatchObject({
+      toolName: 'task',
+      args: { prompt: 'task prompt' },
+      partId: 'task-part-001',
+    })
   })
 
   it('keeps child routing after child idle and namespaces matching call IDs', async () => {

@@ -92,6 +92,33 @@ describe('createSessionTreeLoader', () => {
     const tree = await createSessionTreeLoader(client as any)('child')
 
     expect(tree.info.id).toBe('root')
+    expect(client.session.messages).toHaveBeenCalledTimes(2)
+    expect(client.session.children).toHaveBeenCalledTimes(2)
+    expect(client.session.messages.mock.calls.map(([{ path }]) => path.id)).toEqual(['child', 'root'])
+    expect(client.session.children.mock.calls.map(([{ path }]) => path.id)).toEqual(['child', 'root'])
+  })
+
+  it('does not retain failed child loads across retries', async () => {
+    const client = {
+      session: {
+        get: vi.fn(({ path: { id } }) => Promise.resolve({ data: id === 'child'
+          ? { id: 'child', parentID: 'root', title: 'child', time: { created: 2, updated: 2 } }
+          : { id: 'root', title: 'root', time: { created: 1, updated: 2 } } })),
+        messages: vi.fn()
+          .mockRejectedValueOnce(new Error('temporary'))
+          .mockResolvedValue({ data: [] }),
+        children: vi.fn(({ path: { id } }) => Promise.resolve({ data: id === 'root'
+          ? [{ id: 'child', parentID: 'root', title: 'child', time: { created: 2, updated: 2 } }]
+          : [] })),
+      },
+    }
+    const loadSessionTree = createSessionTreeLoader(client as any)
+
+    await expect(loadSessionTree('child')).rejects.toThrow('temporary')
+    await expect(loadSessionTree('child')).resolves.toMatchObject({ info: { id: 'root' } })
+
+    expect(client.session.messages.mock.calls.map(([{ path }]) => path.id)).toEqual(['child', 'child', 'root'])
+    expect(client.session.children.mock.calls.map(([{ path }]) => path.id)).toEqual(['child', 'child', 'root'])
   })
 
   it('rejects SDK errors instead of accepting missing data', async () => {

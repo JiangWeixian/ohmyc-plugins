@@ -135,3 +135,14 @@ describe('OpenCode bundle boundaries', () => {
     expect(packageJson.scripts.build).not.toContain('--external @ohmyc/timeline')
   })
 })
+
+describe('OpenCode lifecycle compatibility', () => {
+  it('requires a plugin host with disposal finalization support', () => {
+    const packageJson = JSON.parse(
+      readFileSync(path.resolve(import.meta.dirname, '../../package.json'), 'utf8'),
+    ) as { peerDependencies: Record<string, string>; devDependencies: Record<string, string> }
+
+    expect(packageJson.peerDependencies['@opencode-ai/plugin']).toBe('^1.16.0')
+    expect(packageJson.devDependencies['@opencode-ai/plugin']).toBe('^1.16.0')
+  })
+})

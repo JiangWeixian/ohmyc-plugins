@@ -101,19 +101,30 @@ function responseData(label, response) {
 }
 function createSessionTreeLoader(client) {
   const session = client.session;
-  async function loadNode(sessionId, knownInfo) {
-    const [infoResponse, messagesResponse, childrenResponse] = await Promise.all([
-      knownInfo ? Promise.resolve({ data: knownInfo }) : session.get({ path: { id: sessionId }, url: "/session/{id}" }),
-      session.messages({ path: { id: sessionId }, url: "/session/{id}/message" }),
-      session.children({ path: { id: sessionId }, url: "/session/{id}/children" })
-    ]);
-    const info = responseData("session.get", infoResponse);
-    const messages = responseData("session.messages", messagesResponse);
-    const childInfos = responseData("session.children", childrenResponse);
-    const children = await Promise.all(childInfos.map((child) => loadNode(String(child.id), child)));
-    return { info, messages, children };
-  }
   return async (observedSessionId) => {
+    const nodes = new Map;
+    function loadNode(sessionId, knownInfo) {
+      const existing = nodes.get(sessionId);
+      if (existing)
+        return existing;
+      const node = Promise.all([
+        knownInfo ? Promise.resolve({ data: knownInfo }) : session.get({ path: { id: sessionId }, url: "/session/{id}" }),
+        session.messages({ path: { id: sessionId }, url: "/session/{id}/message" }),
+        session.children({ path: { id: sessionId }, url: "/session/{id}/children" })
+      ]).then(async ([infoResponse, messagesResponse, childrenResponse]) => {
+        const info = responseData("session.get", infoResponse);
+        const messages = responseData("session.messages", messagesResponse);
+        const childInfos = responseData("session.children", childrenResponse);
+        const children = await Promise.all(childInfos.map((child) => loadNode(String(child.id), child)));
+        return { info, messages, children };
+      });
+      nodes.set(sessionId, node);
+      node.catch(() => {
+        if (nodes.get(sessionId) === node)
+          nodes.delete(sessionId);
+      });
+      return node;
+    }
     const observed = await loadNode(observedSessionId);
     if (!observed.info.parentID)
       return observed;
@@ -203,8 +214,8 @@ function toParsedSessionData(acc) {
   const messages = [...acc.messages.values()];
   const userMessages = messages.filter((message) => message.role === "user");
   const assistantMessages = messages.filter((message) => message.role === "assistant");
-  const firstRootUser = userMessages.filter((message) => message.sessionId === acc.sessionId).sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))[0];
-  const firstText = [...acc.textParts.values()].filter((part) => part.sessionId === acc.sessionId && part.messageId === firstRootUser?.messageId).filter((part) => !part.synthetic && !part.ignored && part.text.trim()).sort((a, b) => a.partId.localeCompare(b.partId))[0]?.text.trim();
+  const rootUserMessages = userMessages.filter((message) => message.sessionId === acc.sessionId).sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId));
+  const firstText = rootUserMessages.flatMap((message) => [...acc.textParts.values()].filter((part) => part.sessionId === acc.sessionId && part.messageId === message.messageId).filter((part) => !part.synthetic && !part.ignored && part.text.trim()).sort((a, b) => a.partId.localeCompare(b.partId)).map((part) => part.text.trim()))[0];
   const explicitTitle = isDefaultSessionTitle(acc.title) ? null : acc.title.trim();
   const summary = explicitTitle ?? firstText ?? "(untitled session)";
   const tokensInput = assistantMessages.reduce((sum, message) => sum + message.tokens.input, 0);
@@ -332,6 +343,26 @@ function createEventHandler(deps) {
       acc.toolPartIndex.set(partKey, callKey);
     acc.dirty = true;
   }
+  function reconcileTaskHookAlias(acc, sessionID, part) {
+    const partId = String(part.id);
+    const callId = String(part.callID);
+    const partKey = keyed(sessionID, partId);
+    const callKey = keyed(sessionID, callId);
+    const toolName = String(part.tool);
+    const alias = acc.toolCalls.get(partKey);
+    if (partKey === callKey || toolName.toLowerCase() !== "task" || alias?.toolName.toLowerCase() !== "task" || alias.partId !== null || acc.toolCalls.has(callKey))
+      return;
+    acc.toolCalls.delete(partKey);
+    acc.liveToolCallKeys.delete(partKey);
+    acc.toolCalls.set(callKey, {
+      ...alias,
+      callId,
+      messageId: part.messageID === undefined ? null : String(part.messageID),
+      partId
+    });
+    acc.liveToolCallKeys.add(callKey);
+    return alias.args;
+  }
   function getArgs(value) {
     return value && typeof value === "object" && !Array.isArray(value) ? value : {};
   }
@@ -390,11 +421,12 @@ function createEventHandler(deps) {
         acc.livePartKeys.add(partKey);
         acc.partTombstones.delete(partKey);
       }
+      const liveArgs = reconcileTaskHookAlias(acc, sessionID, part);
       putToolCall(acc, {
         sessionId: sessionID,
         callId: String(part.callID),
         toolName: String(part.tool),
-        args: getArgs(part.state?.input),
+        args: liveArgs ?? getArgs(part.state?.input),
         messageId: part.messageID === undefined ? null : String(part.messageID),
         partId: String(part.id)
       }, keyed(sessionID, String(part.callID)), source);

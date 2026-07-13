@@ -48,22 +48,33 @@ function responseData<T>(label: string, response: SdkResponse<T>): T {
 export function createSessionTreeLoader(client: OpenCodeSnapshotClient): LoadSessionTree {
   const session = client.session as unknown as SnapshotSessionApi
 
-  async function loadNode(sessionId: string, knownInfo?: Record<string, any>): Promise<HydratedSessionNode> {
-    const [infoResponse, messagesResponse, childrenResponse] = await Promise.all([
-      knownInfo
-        ? Promise.resolve({ data: knownInfo })
-        : session.get({ path: { id: sessionId }, url: '/session/{id}' }),
-      session.messages({ path: { id: sessionId }, url: '/session/{id}/message' }),
-      session.children({ path: { id: sessionId }, url: '/session/{id}/children' }),
-    ])
-    const info = responseData<Record<string, any>>('session.get', infoResponse)
-    const messages = responseData<HydratedSessionNode['messages']>('session.messages', messagesResponse)
-    const childInfos = responseData<Array<Record<string, any>>>('session.children', childrenResponse)
-    const children = await Promise.all(childInfos.map((child) => loadNode(String(child.id), child)))
-    return { info, messages, children }
-  }
-
   return async (observedSessionId) => {
+    const nodes = new Map<string, Promise<HydratedSessionNode>>()
+
+    function loadNode(sessionId: string, knownInfo?: Record<string, any>): Promise<HydratedSessionNode> {
+      const existing = nodes.get(sessionId)
+      if (existing) return existing
+
+      const node = Promise.all([
+        knownInfo
+          ? Promise.resolve({ data: knownInfo })
+          : session.get({ path: { id: sessionId }, url: '/session/{id}' }),
+        session.messages({ path: { id: sessionId }, url: '/session/{id}/message' }),
+        session.children({ path: { id: sessionId }, url: '/session/{id}/children' }),
+      ]).then(async ([infoResponse, messagesResponse, childrenResponse]) => {
+        const info = responseData<Record<string, any>>('session.get', infoResponse)
+        const messages = responseData<HydratedSessionNode['messages']>('session.messages', messagesResponse)
+        const childInfos = responseData<Array<Record<string, any>>>('session.children', childrenResponse)
+        const children = await Promise.all(childInfos.map((child) => loadNode(String(child.id), child)))
+        return { info, messages, children }
+      })
+      nodes.set(sessionId, node)
+      void node.catch(() => {
+        if (nodes.get(sessionId) === node) nodes.delete(sessionId)
+      })
+      return node
+    }
+
     const observed = await loadNode(observedSessionId)
     if (!observed.info.parentID) return observed
 
@@ -228,13 +239,16 @@ function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
   const messages = [...acc.messages.values()]
   const userMessages = messages.filter((message) => message.role === 'user')
   const assistantMessages = messages.filter((message) => message.role === 'assistant')
-  const firstRootUser = userMessages
+  const rootUserMessages = userMessages
     .filter((message) => message.sessionId === acc.sessionId)
-    .sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))[0]
-  const firstText = [...acc.textParts.values()]
-    .filter((part) => part.sessionId === acc.sessionId && part.messageId === firstRootUser?.messageId)
-    .filter((part) => !part.synthetic && !part.ignored && part.text.trim())
-    .sort((a, b) => a.partId.localeCompare(b.partId))[0]?.text.trim()
+    .sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))
+  const firstText = rootUserMessages.flatMap((message) =>
+    [...acc.textParts.values()]
+      .filter((part) => part.sessionId === acc.sessionId && part.messageId === message.messageId)
+      .filter((part) => !part.synthetic && !part.ignored && part.text.trim())
+      .sort((a, b) => a.partId.localeCompare(b.partId))
+      .map((part) => part.text.trim()),
+  )[0]
   const explicitTitle = isDefaultSessionTitle(acc.title) ? null : acc.title!.trim()
   const summary = explicitTitle ?? firstText ?? '(untitled session)'
   const tokensInput = assistantMessages.reduce((sum, message) => sum + message.tokens.input, 0)
@@ -400,6 +414,38 @@ export function createEventHandler(deps: EventHandlerDeps) {
     acc.dirty = true
   }
 
+  function reconcileTaskHookAlias(
+    acc: SessionAccumulator,
+    sessionID: string,
+    part: { id: unknown; callID: unknown; tool: unknown; messageID?: unknown },
+  ): Record<string, unknown> | undefined {
+    const partId = String(part.id)
+    const callId = String(part.callID)
+    const partKey = keyed(sessionID, partId)
+    const callKey = keyed(sessionID, callId)
+    const toolName = String(part.tool)
+    const alias = acc.toolCalls.get(partKey)
+
+    if (
+      partKey === callKey
+      || toolName.toLowerCase() !== 'task'
+      || alias?.toolName.toLowerCase() !== 'task'
+      || alias.partId !== null
+      || acc.toolCalls.has(callKey)
+    ) return undefined
+
+    acc.toolCalls.delete(partKey)
+    acc.liveToolCallKeys.delete(partKey)
+    acc.toolCalls.set(callKey, {
+      ...alias,
+      callId,
+      messageId: part.messageID === undefined ? null : String(part.messageID),
+      partId,
+    })
+    acc.liveToolCallKeys.add(callKey)
+    return alias.args
+  }
+
   function getArgs(value: unknown): Record<string, unknown> {
     return value && typeof value === 'object' && !Array.isArray(value)
       ? value as Record<string, unknown>
@@ -477,11 +523,12 @@ export function createEventHandler(deps: EventHandlerDeps) {
         acc.livePartKeys.add(partKey)
         acc.partTombstones.delete(partKey)
       }
+      const liveArgs = reconcileTaskHookAlias(acc, sessionID, part)
       putToolCall(acc, {
         sessionId: sessionID,
         callId: String(part.callID),
         toolName: String(part.tool),
-        args: getArgs(part.state?.input),
+        args: liveArgs ?? getArgs(part.state?.input),
         messageId: part.messageID === undefined ? null : String(part.messageID),
         partId: String(part.id),
       }, keyed(sessionID, String(part.callID)), source)
