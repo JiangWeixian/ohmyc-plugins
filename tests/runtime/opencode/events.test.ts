@@ -12,6 +12,8 @@ import { createAccumulator, createEventHandler } from '../../../opencode'
 import {
   assistantMessageUpdatedEvent,
   assistantMessageUpdatedEvent2,
+  childSessionCreatedEvent,
+  childSessionIdleEvent,
   messagePartUpdatedEvent,
   nestedAssistantMessageUpdatedEvent,
   ignoredMessagePartEvent,
@@ -21,6 +23,7 @@ import {
   sessionIdleEvent,
   sessionTitleUpdatedEvent,
   syntheticMessagePartEvent,
+  toolPartUpdatedEvent,
   userMessageUpdatedEvent,
   userMessageUpdatedEvent2,
 } from '../../fixtures/events'
@@ -66,11 +69,12 @@ describe('createEventHandler', () => {
 
   const mockLog = vi.fn()
 
-  const createHandler = () =>
+  const createHandler = (overrides: Record<string, unknown> = {}) =>
     createEventHandler({
       project: 'test-project',
       writer: mockWriter as any,
       log: mockLog,
+      ...overrides,
     })
 
   beforeEach(() => {
@@ -176,6 +180,84 @@ describe('createEventHandler', () => {
     })
   })
 
+  it('counts the same call ID once across hook and persisted part events', async () => {
+    const { handler, sessions, toolExecuteBefore, toolExecuteAfter } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await toolExecuteBefore(
+      { sessionID: 'test-session-001', tool: 'Read', callID: 'call-001' },
+      { args: { filePath: '/tmp/a' } },
+    )
+    await handler({ event: toolPartUpdatedEvent })
+    await toolExecuteAfter(
+      { sessionID: 'test-session-001', tool: 'Read', callID: 'call-001', args: { filePath: '/tmp/a' } },
+      { title: 'Read /tmp/a', output: '', metadata: {} },
+    )
+    const acc = sessions.get('test-session-001')!
+    expect(acc.toolCalls).toEqual(new Map([['test-session-001:call-001', {
+      sessionId: 'test-session-001',
+      callId: 'call-001',
+      toolName: 'Read',
+      args: { filePath: '/tmp/a' },
+      messageId: 'msg-assistant-001',
+      partId: 'part-tool-001',
+    }]]))
+    expect(acc.toolPartIndex.get('test-session-001:part-tool-001')).toBe('test-session-001:call-001')
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([{ toolName: 'Read', callCount: 1 }])
+  })
+
+  it('keeps child routing after child idle and namespaces matching call IDs', async () => {
+    const { childToParent, handler, toolExecuteBefore } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: childSessionCreatedEvent })
+    await toolExecuteBefore({ sessionID: 'test-session-001', tool: 'Read', callID: 'same' }, { args: {} })
+    await toolExecuteBefore({ sessionID: 'child-session-001', tool: 'Read', callID: 'same' }, { args: {} })
+    await handler({ event: childSessionIdleEvent })
+    expect(childToParent.get('child-session-001')).toBe('test-session-001')
+    await toolExecuteBefore({ sessionID: 'child-session-001', tool: 'Skill', callID: 'skill-001' }, { args: { name: 'github' } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0]).toMatchObject({
+      tools: expect.arrayContaining([{ toolName: 'Read', callCount: 2 }]),
+      skills: ['github'],
+    })
+    expect(mockWriter.writeSession.mock.calls.every(([data]) => data.sessionId === 'test-session-001')).toBe(true)
+  })
+
+  it('removes child routing when its root is deleted', async () => {
+    const { childToParent, handler } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: childSessionCreatedEvent })
+    await handler({ event: sessionDeletedEvent })
+
+    expect(childToParent.has('child-session-001')).toBe(false)
+  })
+
+  it('never checkpoints a child or unresolved session ID', async () => {
+    const loadSessionTree = vi.fn().mockRejectedValue(new Error('temporarily unavailable'))
+    const { handler } = createHandler({ loadSessionTree })
+    await handler({ event: childSessionCreatedEvent })
+    await handler({ event: childSessionIdleEvent })
+
+    expect(loadSessionTree).toHaveBeenCalledWith('child-session-001')
+    expect(mockWriter.writeSession).not.toHaveBeenCalled()
+  })
+
+  it('removes a deleted tool part from the next checkpoint', async () => {
+    const { handler, sessions } = createHandler()
+    await handler({ event: sessionCreatedEvent })
+    await handler({ event: toolPartUpdatedEvent })
+    expect(sessions.get('test-session-001')!.toolCalls.size).toBe(1)
+    await handler({ event: {
+      type: 'message.part.removed',
+      properties: { sessionID: 'test-session-001', messageID: 'msg-assistant-001', partID: 'part-tool-001' },
+    } })
+    await handler({ event: sessionIdleEvent })
+
+    expect(mockWriter.writeSession.mock.calls.at(-1)![0].tools).toEqual([])
+  })
+
   it('accepts session IDs from both outer and legacy nested event shapes', async () => {
     const { handler } = createHandler()
     await handler({ event: sessionCreatedEvent })
@@ -256,7 +338,7 @@ describe('createEventHandler', () => {
     const parent = sessions.get('test-session-001')
     expect(sessions.has(childSessionID)).toBe(false)
     expect(parent?.messages.has(`${childSessionID}:msg-child-user-001`)).toBe(true)
-    expect(parent?.tools.get('Read')).toBe(1)
+    expect(parent?.toolCalls.size).toBe(1)
 
     await handler({ event: sessionIdleEvent })
 

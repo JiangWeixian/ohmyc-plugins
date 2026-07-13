@@ -97,8 +97,7 @@ interface SessionAccumulator {
   textParts: Map<string, TextPartSnapshot>
   toolCalls: Map<string, ToolCallSnapshot>
   toolPartIndex: Map<string, string>
-  tools: Map<string, number>
-  skills: Set<string>
+  legacySkills: Set<string>
   dirty: boolean
   persisted: boolean
   hydrated: boolean
@@ -129,8 +128,7 @@ export function createAccumulator(sessionId: string, project = 'unknown'): Sessi
     textParts: new Map(),
     toolCalls: new Map(),
     toolPartIndex: new Map(),
-    tools: new Map(),
-    skills: new Set(),
+    legacySkills: new Set(),
     dirty: false,
     persisted: false,
     hydrated: false,
@@ -166,6 +164,15 @@ function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
   const latestAssistant = assistantMessages
     .sort((a, b) => a.createdAt - b.createdAt || a.messageId.localeCompare(b.messageId))
     .at(-1)
+  const toolCounts = new Map<string, number>()
+  const skills = new Set(acc.legacySkills)
+
+  for (const call of acc.toolCalls.values()) {
+    toolCounts.set(call.toolName, (toolCounts.get(call.toolName) ?? 0) + 1)
+    if ((call.toolName === 'Skill' || call.toolName === 'skill') && typeof call.args.name === 'string') {
+      skills.add(call.args.name)
+    }
+  }
 
   return {
     sessionId: acc.sessionId,
@@ -182,8 +189,8 @@ function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
     summarySource: explicitTitle || !firstText ? 'auto' : 'first_message',
     transcriptPath: `opencode://${acc.sessionId}`,
     fileSize: 0,
-    tools: [...acc.tools.entries()].map(([toolName, callCount]) => ({ toolName, callCount })),
-    skills: [...acc.skills],
+    tools: [...toolCounts.entries()].map(([toolName, callCount]) => ({ toolName, callCount })),
+    skills: [...skills],
     model: latestAssistant?.model ?? acc.sessionModel,
   }
 }
@@ -203,6 +210,7 @@ export interface EventHandlerDeps {
   project: string // directory basename of the active project
   writer: ReturnType<typeof createWriter> // SQLite session writer
   log: typeof log // logging function
+  loadSessionTree?: (sessionID: string) => Promise<unknown>
 }
 
 // Creates the event handler and tool hooks for a single project.
@@ -213,7 +221,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
   // Maps subagent sessionID → parent sessionID. Populated from
   // session.created events where info.parentID is present.
   const childToParent = new Map<string, string>()
+  const rootSessionIds = new Set<string>()
   const queues = new Map<string, Promise<void>>()
+  let legacyCallCount = 0
 
   function enqueue(rootId: string, work: () => Promise<void>): Promise<void> {
     const previous = queues.get(rootId) ?? Promise.resolve()
@@ -224,7 +234,16 @@ export function createEventHandler(deps: EventHandlerDeps) {
     })
   }
 
+  function canCheckpoint(acc: SessionAccumulator): boolean {
+    if (!rootSessionIds.has(acc.sessionId)) {
+      deps.log('warn', 'Skipped non-root OpenCode checkpoint', { sessionID: acc.sessionId })
+      return false
+    }
+    return true
+  }
+
   async function checkpoint(acc: SessionAccumulator): Promise<void> {
+    if (!canCheckpoint(acc)) return
     acc.endedAt = Date.now()
     try {
       deps.writer.writeSession(toParsedSessionData(acc))
@@ -239,12 +258,23 @@ export function createEventHandler(deps: EventHandlerDeps) {
     }
   }
 
+  function getRootSessionID(sessionID: string): string {
+    let rootID = sessionID
+    const visited = new Set<string>()
+
+    while (childToParent.has(rootID) && !visited.has(rootID)) {
+      visited.add(rootID)
+      rootID = childToParent.get(rootID)!
+    }
+
+    return rootID
+  }
+
   // Resolves a sessionID to its root parent accumulator. Subagent
   // sessions are transparently redirected so their tools, tokens and
   // turns merge into the parent session instead of creating a row.
   function getAccumulator(sessionId: string): SessionAccumulator {
-    const parentId = childToParent.get(sessionId)
-    const targetId = parentId ?? sessionId
+    const targetId = getRootSessionID(sessionId)
     let acc = sessions.get(targetId)
     if (!acc) {
       acc = createAccumulator(targetId, deps.project)
@@ -256,6 +286,55 @@ export function createEventHandler(deps: EventHandlerDeps) {
   // Checks whether a sessionID belongs to a subagent (has a parent).
   function isChild(sessionId: string): boolean {
     return childToParent.has(sessionId)
+  }
+
+  function putToolCall(acc: SessionAccumulator, value: ToolCallSnapshot): void {
+    const callKey = keyed(value.sessionId, value.callId)
+    acc.toolCalls.set(callKey, { ...acc.toolCalls.get(callKey), ...value })
+    if (value.partId) acc.toolPartIndex.set(keyed(value.sessionId, value.partId), callKey)
+    acc.dirty = true
+  }
+
+  function getArgs(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown>
+      : {}
+  }
+
+  async function tryHydratingUnknownSession(sessionID: string, acc: SessionAccumulator): Promise<void> {
+    if (rootSessionIds.has(acc.sessionId) || acc.hydrated || !deps.loadSessionTree) return
+
+    try {
+      await deps.loadSessionTree(sessionID)
+    } catch (error) {
+      deps.log('warn', 'OpenCode session hydration failed', {
+        sessionID,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
+  async function recordToolCall(
+    hookInput: { sessionID: string; tool: string; callID?: string; args?: unknown },
+    args: Record<string, unknown>,
+  ): Promise<void> {
+    const rootID = getRootSessionID(hookInput.sessionID)
+    await enqueue(rootID, async () => {
+      const acc = getAccumulator(hookInput.sessionID)
+      await tryHydratingUnknownSession(hookInput.sessionID, acc)
+      const callID = typeof hookInput.callID === 'string' && hookInput.callID
+        ? hookInput.callID
+        : `legacy-${++legacyCallCount}`
+      const existing = acc.toolCalls.get(keyed(hookInput.sessionID, callID))
+      putToolCall(acc, {
+        sessionId: hookInput.sessionID,
+        callId: callID,
+        toolName: hookInput.tool,
+        args,
+        messageId: existing?.messageId ?? null,
+        partId: existing?.partId ?? null,
+      })
+    })
   }
 
   return {
@@ -270,17 +349,26 @@ export function createEventHandler(deps: EventHandlerDeps) {
         ? event.properties?.info?.parentID as string | undefined
         : undefined
       if (parentID) {
-        childToParent.set(sessionID, parentID)
-        deps.log('debug', 'Subagent session detected', { sessionID, parentID })
+        const rootParentID = getRootSessionID(parentID)
+        childToParent.set(sessionID, rootParentID)
+        deps.log('debug', 'Subagent session detected', { sessionID, parentID: rootParentID })
       }
-      const rootId = childToParent.get(sessionID) ?? sessionID
+      const rootId = getRootSessionID(sessionID)
 
       return enqueue(rootId, async () => {
         try {
+          const acc = getAccumulator(sessionID)
+          const isNewRoot = event.type === 'session.created' && !parentID
+          if (isNewRoot) {
+            rootSessionIds.add(sessionID)
+            acc.hydrated = true
+          } else {
+            await tryHydratingUnknownSession(sessionID, acc)
+          }
+
           switch (event.type) {
             case 'session.created':
             case 'session.updated': {
-              const acc = getAccumulator(sessionID)
               const info = event.properties?.info
               const titleChanged = info?.title !== undefined
                 && String(info.title) !== acc.title
@@ -297,10 +385,9 @@ export function createEventHandler(deps: EventHandlerDeps) {
             }
 
             case 'session.idle': {
-              // Subagent idle: merge is already done (getAccumulator
-              // redirected to parent). Just clean up the mapping.
+              // Subagent state is already merged into the root accumulator.
+              // Keep the mapping because the child can resume after idle.
               if (isChild(sessionID)) {
-                childToParent.delete(sessionID)
                 return
               }
               const acc = sessions.get(sessionID)
@@ -318,12 +405,15 @@ export function createEventHandler(deps: EventHandlerDeps) {
                 await checkpoint(acc)
                 if (!acc.dirty) sessions.delete(sessionID)
               }
+              for (const [childID, rootID] of childToParent) {
+                if (rootID === sessionID) childToParent.delete(childID)
+              }
+              rootSessionIds.delete(sessionID)
               break
             }
 
             case 'session.error': {
               if (isChild(sessionID)) {
-                childToParent.delete(sessionID)
                 return
               }
               const acc = sessions.get(sessionID)
@@ -349,7 +439,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
                     cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
                   },
                 }
-                const acc = getAccumulator(sessionID)
                 acc.messages.set(keyed(sessionID, snapshot.messageId), snapshot)
                 acc.dirty = true
               }
@@ -367,10 +456,31 @@ export function createEventHandler(deps: EventHandlerDeps) {
                   synthetic: Boolean(part.synthetic),
                   ignored: Boolean(part.ignored),
                 }
-                const acc = getAccumulator(sessionID)
                 acc.textParts.set(keyed(sessionID, snapshot.partId), snapshot)
                 acc.dirty = true
+              } else if (part && part.type === 'tool' && part.id !== undefined && part.callID !== undefined && part.tool !== undefined) {
+                putToolCall(acc, {
+                  sessionId: sessionID,
+                  callId: String(part.callID),
+                  toolName: String(part.tool),
+                  args: getArgs(part.state?.input),
+                  messageId: part.messageID === undefined ? null : String(part.messageID),
+                  partId: String(part.id),
+                })
               }
+              break
+            }
+
+            case 'message.part.removed': {
+              const partID = event.properties?.partID
+              if (partID === undefined) break
+
+              const partKey = keyed(sessionID, String(partID))
+              const callKey = acc.toolPartIndex.get(partKey)
+              if (callKey) acc.toolCalls.delete(callKey)
+              acc.toolPartIndex.delete(partKey)
+              acc.textParts.delete(partKey)
+              acc.dirty = true
               break
             }
 
@@ -378,7 +488,6 @@ export function createEventHandler(deps: EventHandlerDeps) {
               const messageID = event.properties?.messageID
               if (messageID === undefined) break
 
-              const acc = getAccumulator(sessionID)
               const normalizedMessageID = String(messageID)
               let removed = acc.messages.delete(keyed(sessionID, normalizedMessageID))
               for (const [partKey, part] of acc.textParts) {
@@ -404,25 +513,35 @@ export function createEventHandler(deps: EventHandlerDeps) {
       })
     },
 
-    toolExecuteBefore: async (hookInput: { sessionID: string; tool: string }) => {
+    toolExecuteBefore: async (
+      hookInput: { sessionID: string; tool: string; callID?: string },
+      hookOutput?: { args?: unknown },
+    ) => {
       try {
-        const acc = getAccumulator(hookInput.sessionID)
-        acc.tools.set(hookInput.tool, (acc.tools.get(hookInput.tool) || 0) + 1)
+        await recordToolCall(hookInput, getArgs(hookOutput?.args))
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
       }
     },
 
-    toolExecuteAfter: async (hookInput: { sessionID: string; tool: string; args: any }) => {
+    toolExecuteAfter: async (
+      hookInput: { sessionID: string; tool: string; callID?: string; args?: unknown },
+      _hookOutput?: unknown,
+    ) => {
       try {
-        // Both "Skill" and "skill" are valid depending on the agent
-        // version — check both to avoid missing skill invocations.
-        if (hookInput.tool === 'Skill' || hookInput.tool === 'skill') {
-          const acc = getAccumulator(hookInput.sessionID)
-          const args = hookInput.args
-          if (args && typeof args === 'object' && typeof args.name === 'string') {
-            acc.skills.add(args.name)
-          }
+        const args = getArgs(hookInput.args)
+        if (typeof hookInput.callID === 'string' && hookInput.callID) {
+          await recordToolCall(hookInput, args)
+        } else if (hookInput.tool === 'Skill' || hookInput.tool === 'skill') {
+          const rootID = getRootSessionID(hookInput.sessionID)
+          await enqueue(rootID, async () => {
+            const acc = getAccumulator(hookInput.sessionID)
+            await tryHydratingUnknownSession(hookInput.sessionID, acc)
+            if (typeof args.name === 'string') {
+              acc.legacySkills.add(args.name)
+              acc.dirty = true
+            }
+          })
         }
       } catch (error) {
         deps.log('error', 'Tool execute error', { error: error instanceof Error ? error.message : String(error) })
@@ -437,6 +556,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
       queues.clear()
       sessions.clear()
       childToParent.clear()
+      rootSessionIds.clear()
     },
   }
 }

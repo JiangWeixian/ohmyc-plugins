@@ -143,3 +143,37 @@ export const ignoredMessagePartEvent = {
     },
   },
 }
+
+export const toolPartUpdatedEvent = {
+  type: 'message.part.updated',
+  properties: {
+    sessionID: 'test-session-001',
+    part: {
+      id: 'part-tool-001',
+      sessionID: 'test-session-001',
+      messageID: 'msg-assistant-001',
+      type: 'tool',
+      callID: 'call-001',
+      tool: 'Read',
+      state: { status: 'completed', input: { filePath: '/tmp/a' }, output: '', title: '', metadata: {}, time: { start: 1, end: 2 } },
+    },
+  },
+}
+
+export const childSessionCreatedEvent = {
+  type: 'session.created',
+  properties: {
+    sessionID: 'child-session-001',
+    info: {
+      id: 'child-session-001',
+      parentID: 'test-session-001',
+      title: 'Child session - 2026-07-12T03:16:01.973Z',
+      time: { created: 1_720_000_000_500, updated: 1_720_000_000_500 },
+    },
+  },
+}
+
+export const childSessionIdleEvent = {
+  type: 'session.idle',
+  properties: { sessionID: 'child-session-001' },
+}
