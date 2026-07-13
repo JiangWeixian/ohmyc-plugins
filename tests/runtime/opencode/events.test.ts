@@ -818,6 +818,9 @@ describe('createTimelineHooks', () => {
 
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBe(1)
     expect(close).toHaveBeenCalledTimes(1)
+    expect(mockWriter.writeSession.mock.invocationCallOrder.at(-1)!).toBeLessThan(
+      close.mock.invocationCallOrder[0],
+    )
   })
 
   it('closes the database once when runtime disposal rejects', async () => {
