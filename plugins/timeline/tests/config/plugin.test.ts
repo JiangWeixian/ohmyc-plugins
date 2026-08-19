@@ -30,13 +30,15 @@ describe('npm package contents', () => {
       readFileSync(path.resolve(import.meta.dirname, '../../package.json'), 'utf8'),
     ) as { files: string[] }
 
+    // `.agents` is deliberately absent: the marketplace manifests and the repo's
+    // own skills live at the repo root, not inside the published plugin.
     expect(packageJson.files).toEqual(expect.arrayContaining([
-      '.agents',
       '.claude-plugin',
       '.codex-plugin',
       'dist',
       'hooks',
     ]))
+    expect(packageJson.files).not.toContain('.agents')
   })
 })
 
@@ -67,9 +69,45 @@ describe('Codex Git install contents', () => {
   })
 })
 
+describe('manifest versions', () => {
+  const repoRoot = path.resolve(import.meta.dirname, '../../../..')
+
+  /** Drop semver build metadata: `1.0.6+codex.x` is the same release as `1.0.6`. */
+  const core = (version: string) => version.split('+')[0]
+
+  // changesets only bumps package.json. These three copies are hand-maintained,
+  // and they silently fell a version behind — users installing through either
+  // marketplace saw the stale number. `bun run sync:versions` fixes drift;
+  // this fails the build if someone edits one by hand instead.
+  it('keeps every agent manifest on the package version', () => {
+    const pkg = JSON.parse(
+      readFileSync(path.join(repoRoot, 'plugins/timeline/package.json'), 'utf8'),
+    ) as { version: string }
+
+    const marketplace = JSON.parse(
+      readFileSync(path.join(repoRoot, '.claude-plugin/marketplace.json'), 'utf8'),
+    ) as { plugins: Array<{ name: string, version: string }> }
+    const claudePlugin = JSON.parse(
+      readFileSync(path.join(repoRoot, 'plugins/timeline/.claude-plugin/plugin.json'), 'utf8'),
+    ) as { version: string }
+    const codexPlugin = JSON.parse(
+      readFileSync(path.join(repoRoot, 'plugins/timeline/.codex-plugin/plugin.json'), 'utf8'),
+    ) as { version: string }
+
+    const entry = marketplace.plugins.find(plugin => plugin.name === 'timeline')
+    expect(core(entry!.version)).toBe(pkg.version)
+    expect(core(claudePlugin.version)).toBe(pkg.version)
+    expect(core(codexPlugin.version)).toBe(pkg.version)
+  })
+})
+
 describe('Codex marketplace entry', () => {
-  it('points the timeline plugin entry at the project root', () => {
-    const marketplacePath = path.resolve(import.meta.dirname, '../../.agents/plugins/marketplace.json')
+  // Both marketplace manifests live at the repo root; the plugin is two levels
+  // down in plugins/timeline.
+  const repoRoot = path.resolve(import.meta.dirname, '../../../..')
+
+  it('points the timeline plugin entry at the plugin subdirectory', () => {
+    const marketplacePath = path.join(repoRoot, '.agents/plugins/marketplace.json')
     const marketplace = JSON.parse(readFileSync(marketplacePath, 'utf8')) as {
       name: string
       plugins: Array<{
@@ -86,7 +124,7 @@ describe('Codex marketplace entry', () => {
       name: 'timeline',
       source: {
         source: 'local',
-        path: './',
+        path: './plugins/timeline',
       },
       policy: {
         installation: 'AVAILABLE',
@@ -94,6 +132,28 @@ describe('Codex marketplace entry', () => {
       },
       category: 'Productivity',
     })
+  })
+
+  // Regression guard. `path: "./"` used to be the committed value: Codex accepts
+  // the marketplace, then enumerates zero plugins from it, so
+  // `codex plugin add timeline@ohmyc` fails with "not found in marketplace" and
+  // nothing upstream reports a problem. Verified against codex by installing the
+  // same tree from a subdirectory (works) and from the root (does not).
+  it('never points either marketplace at the repository root', () => {
+    const codex = JSON.parse(
+      readFileSync(path.join(repoRoot, '.agents/plugins/marketplace.json'), 'utf8'),
+    ) as { plugins: Array<{ name: string, source: { path: string } }> }
+    const claude = JSON.parse(
+      readFileSync(path.join(repoRoot, '.claude-plugin/marketplace.json'), 'utf8'),
+    ) as { plugins: Array<{ name: string, source: string }> }
+
+    const rootish = new Set(['./', '.', ''])
+    for (const plugin of codex.plugins) {
+      expect(rootish.has(plugin.source.path)).toBe(false)
+    }
+    for (const plugin of claude.plugins) {
+      expect(rootish.has(plugin.source)).toBe(false)
+    }
   })
 })
 

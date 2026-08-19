@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// node_modules/@ohmyc/timeline/dist/chunk-KNZ4ZVYP.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-KNZ4ZVYP.js
 function createWriter(db) {
   const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
   const upsertSession = db.prepare(`
@@ -59,7 +59,7 @@ function createWriter(db) {
   };
 }
 
-// node_modules/@ohmyc/timeline/dist/chunk-J2QLCXDJ.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-J2QLCXDJ.js
 import { readFileSync, statSync } from "fs";
 import os from "os";
 import path from "path";
@@ -431,7 +431,7 @@ function extractProjectFromPath(transcriptPath) {
   return "unknown";
 }
 
-// node_modules/@ohmyc/timeline/dist/chunk-VIS7HKQB.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-VIS7HKQB.js
 var CURRENT_SCHEMA_VERSION = 3;
 var SCHEMA_SQL = `
 CREATE TABLE sessions (
@@ -480,7 +480,7 @@ var MIGRATIONS = {
   3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;"
 };
 
-// node_modules/@ohmyc/timeline/dist/chunk-NKLR4VCN.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-NKLR4VCN.js
 function migrate(db, options) {
   const targetVersion = options?.currentSchemaVersion ?? CURRENT_SCHEMA_VERSION;
   const migrations = options?.migrations ?? MIGRATIONS;
@@ -522,7 +522,7 @@ function migrate(db, options) {
   applyMigrations();
 }
 
-// node_modules/@ohmyc/timeline/dist/chunk-3K3NWBLL.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-3K3NWBLL.js
 function openNodeSqliteDatabase(dbPath) {
   let nativeDb;
   try {
@@ -573,7 +573,7 @@ function isMissingNodeSqlite(error) {
   return error instanceof Error && (error.message.includes("node:sqlite") || error.message.includes("No such built-in module") || error.message.includes("Unknown built-in module"));
 }
 
-// node_modules/@ohmyc/timeline/dist/index.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/index.js
 import { mkdirSync } from "fs";
 import os2 from "os";
 import path2 from "path";
@@ -595,7 +595,7 @@ function closeDatabase(db) {
   db.close();
 }
 
-// node_modules/cac/dist/index.mjs
+// ../../node_modules/.bun/cac@6.7.14/node_modules/cac/dist/index.mjs
 import { EventEmitter } from "events";
 function toArr(any) {
   return any == null ? [] : Array.isArray(any) ? any : [any];

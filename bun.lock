@@ -6,6 +6,13 @@
       "name": "@ohmyc/timeline-plugin",
       "devDependencies": {
         "@changesets/cli": "^2.27.12",
+      },
+    },
+    "plugins/timeline": {
+      "name": "@ohmyc/timeline-plugin",
+      "version": "1.0.6",
+      "devDependencies": {
+        "@changesets/cli": "^2.27.12",
         "@ohmyc/timeline": "0.0.0-snapshot-20260614095355",
         "@opencode-ai/plugin": "^1.16.0",
         "@types/node": "^22.13.0",
@@ -159,6 +166,8 @@
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
 
     "@ohmyc/timeline": ["@ohmyc/timeline@0.0.0-snapshot-20260614095355", "", {}, "sha512-kxai1Fysv8/eEthO5Nj0pcU3SGIrS/7J1GGYiHvVHrbCXAbxbZyaDHBWmHWsH8oiKaeJouiy4vIKDJRWvKY9Ug=="],
+
+    "@ohmyc/timeline-plugin": ["@ohmyc/timeline-plugin@workspace:plugins/timeline"],
 
     "@opencode-ai/plugin": ["@opencode-ai/plugin@1.17.7", "", { "dependencies": { "@opencode-ai/sdk": "1.17.7", "effect": "4.0.0-beta.74", "zod": "4.1.8" }, "peerDependencies": { "@opentui/core": ">=0.3.4", "@opentui/keymap": ">=0.3.4", "@opentui/solid": ">=0.3.4" }, "optionalPeers": ["@opentui/core", "@opentui/keymap", "@opentui/solid"] }, "sha512-/MXRdz5z5tDySwMM4v02cN0om1QgALyE8FTXFU93zKV4I/oW5a0IjQ7dK8Iue3NpRc9e5UHhgO5ELeNLqnpWPA=="],
 
