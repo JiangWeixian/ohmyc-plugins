@@ -8,9 +8,9 @@
   "plugins": [
     {
       "name": "timeline",
-      "source": "./",
+      "source": "./plugins/timeline",
       "description": "Auto-collects Claude Code session data for Timeline dashboard",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "author": {
         "name": "JiangWeixian"
       },

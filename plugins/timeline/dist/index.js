@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { Database } from "bun:sqlite";
 
-// node_modules/@ohmyc/timeline/dist/chunk-KNZ4ZVYP.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-KNZ4ZVYP.js
 function createWriter(db) {
   const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
   const upsertSession = db.prepare(`
@@ -47,7 +47,7 @@ function createWriter(db) {
   };
 }
 
-// node_modules/@ohmyc/timeline/dist/chunk-VIS7HKQB.js
+// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-VIS7HKQB.js
 var CURRENT_SCHEMA_VERSION = 3;
 var SCHEMA_SQL = `
 CREATE TABLE sessions (
