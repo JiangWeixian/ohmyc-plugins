@@ -1,5 +1,5 @@
 {
   "name": "timeline",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "Auto-collects Claude Code, Codex, and OpenCode session data for the OhMyC Timeline dashboard"
 }
