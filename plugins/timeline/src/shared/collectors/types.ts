@@ -17,6 +17,7 @@ export type CollectorEvent = {
   unresolvedParent?: boolean
   rootSession?: boolean
   eventId: string
+  resolvesEventId?: string
   observedAt: number
   sourceAt?: number
   turnId?: string

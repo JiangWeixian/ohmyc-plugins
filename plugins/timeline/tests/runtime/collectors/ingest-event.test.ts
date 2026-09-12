@@ -106,7 +106,10 @@ describe('collector ingestion', () => {
       home,
       hydrate: async events => {
         context = events
-        return [semanticEvent('first', { needsHydration: false })]
+        return [semanticEvent('first-complete', {
+          needsHydration: false,
+          resolvesEventId: first.eventId,
+        })]
       },
       write: () => undefined,
     })).toEqual({ written: 1, queued: 0 })
@@ -122,6 +125,36 @@ describe('collector ingestion', () => {
       write: () => undefined,
     })).toBe('queued')
     expect(await createJournal(home).pending('cursor:c1')).toContainEqual(request)
+  })
+
+  it('acknowledges only the exact lifecycle hydration request', async () => {
+    const home = makeHome()
+    const first = semanticEvent('unused-first', {
+      turnId: undefined,
+      confirmsTurn: undefined,
+      tool: undefined,
+      needsHydration: true,
+      transcriptPath: '/tmp/first.jsonl',
+    })
+    const second = semanticEvent('unused-second', {
+      turnId: undefined,
+      confirmsTurn: undefined,
+      tool: undefined,
+      needsHydration: true,
+      transcriptPath: '/tmp/second.jsonl',
+    })
+    const completion = semanticEvent('completion', {
+      turnId: undefined,
+      tool: undefined,
+      needsHydration: false,
+      resolvesEventId: first.eventId,
+    })
+    expect(await ingestEvents([first, second], {
+      home,
+      hydrate: async () => [completion],
+      write: () => undefined,
+    })).toBe('queued')
+    expect(await createJournal(home).pending('cursor:c1')).toEqual([second])
   })
 
   it('returns queued when hydration exceeds the hook soft budget', async () => {
@@ -151,6 +184,7 @@ describe('collector ingestion', () => {
       sourceSessionId: 'child',
       turnId: 't1',
       tool: { id: 'child', name: 'Read' },
+      resolvesEventId: unresolved.eventId,
     }
     const rootEvent: CollectorEvent = {
       ...rootSemantic,
@@ -171,7 +205,11 @@ describe('collector ingestion', () => {
   it('retires an unresolved fact when matching local root evidence resolves it', async () => {
     const home = makeHome()
     const unresolved = semanticEvent('local-child', { unresolvedParent: true })
-    const resolved = semanticEvent('local-child', { unresolvedParent: false, rootSession: true })
+    const resolved = semanticEvent('local-child', {
+      unresolvedParent: false,
+      rootSession: true,
+      resolvesEventId: unresolved.eventId,
+    })
     const written: ParsedSessionData[] = []
     expect(await ingestEvents([unresolved], {
       home,
@@ -180,6 +218,31 @@ describe('collector ingestion', () => {
     })).toBe('written')
     expect(written[0]).toMatchObject({ sessionId: 'cursor:c1', tools: [{ toolName: 'Read', callCount: 1 }] })
     expect(await createJournal(home).pending('cursor:c1')).toEqual([])
+  })
+
+  it('retains a dual obligation after partial forwarding until exact hydration completion', async () => {
+    const home = makeHome()
+    const request = semanticEvent('dual', {
+      nativeSessionId: 'child',
+      unresolvedParent: true,
+      needsHydration: true,
+    })
+    let complete = false
+    const hydrate = async (events: readonly CollectorEvent[]) => {
+      if (!events.some(event => event.eventId === request.eventId)) return []
+      return [semanticEvent('dual', {
+        nativeSessionId: 'root',
+        sourceSessionId: 'child',
+        needsHydration: complete ? false : true,
+        resolvesEventId: request.eventId,
+      })]
+    }
+    expect(await ingestEvents([request], { home, hydrate, write: () => undefined })).toBe('queued')
+    expect(await createJournal(home).pending('cursor:child')).toEqual([request])
+    complete = true
+    expect(await replayPending({ home, hydrate, write: () => undefined }))
+      .toEqual({ written: 1, queued: 0 })
+    expect(await createJournal(home).pending('cursor:child')).toEqual([])
   })
 
   it('replays a real writer after process exit and converges concurrent workers', async () => {
@@ -200,6 +263,14 @@ describe('collector ingestion', () => {
     await run(process.execPath, [bundledWorker, home, firstPath, databasePath, 'replay'])
     await expect(run(process.execPath, [bundledWorker, home, secondPath, databasePath, 'exit-after-save']))
       .rejects.toMatchObject({ code: 74 })
+    expect(await createJournal(home).pending('cursor:c1')).toContainEqual(semanticEvent('two', { observedAt: 1100 }))
+    const afterSaveDatabase = openDatabase({ dbPath: databasePath })
+    try {
+      expect(getSession(afterSaveDatabase, 'cursor:c1')?.tools)
+        .toEqual([{ session_id: 'cursor:c1', tool_name: 'Read', call_count: 2 }])
+    } finally {
+      closeDatabase(afterSaveDatabase)
+    }
     await run(process.execPath, [bundledWorker, home, firstPath, databasePath, 'replay'])
     await Promise.all([
       run(process.execPath, [bundledWorker, home, firstPath, databasePath]),

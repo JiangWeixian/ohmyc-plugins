@@ -56,11 +56,10 @@ function forwardedEvent(event: CollectorEvent): CollectorEvent {
   return { ...semantic, observedAt, eventId: eventKey(semantic) }
 }
 
-function correspondsTo(original: CollectorEvent, candidate: CollectorEvent): boolean {
-  if (original.agent !== candidate.agent) return false
-  if (original.turnId && candidate.turnId !== original.turnId) return false
-  if (original.tool && candidate.tool?.id !== original.tool.id) return false
-  return true
+function resolves(original: CollectorEvent, candidate: CollectorEvent): boolean {
+  if (candidate.resolvesEventId !== original.eventId || candidate.agent !== original.agent) return false
+  return candidate.nativeSessionId === original.nativeSessionId
+    || candidate.sourceSessionId === original.nativeSessionId
 }
 
 async function processKey(key: string, deps: Dependencies, deadline: number): Promise<ProcessResult> {
@@ -105,25 +104,22 @@ async function processKey(key: string, deps: Dependencies, deadline: number): Pr
 
     const unresolved = pending.filter(event => event.unresolvedParent)
     const unresolvedAck = unresolved
-      .filter(event => crossSession.some(forwarded => forwarded.sourceSessionId === event.nativeSessionId
-        && correspondsTo(event, forwarded))
+      .filter(event => crossSession.some(forwarded => resolves(event, forwarded))
         || local.some(resolved => !resolved.unresolvedParent
-          && resolved.nativeSessionId === event.nativeSessionId
-          && correspondsTo(event, resolved)))
+          && resolves(event, resolved)))
       .map(event => event.eventId)
     const hydrationAck = pending
-      .filter(event => event.needsHydration
-        && local.some(completed => completed.needsHydration === false
-          && completed.nativeSessionId === event.nativeSessionId
-          && correspondsTo(event, completed)))
+      .filter(event => event.needsHydration && !event.resolvesEventId
+        && [...local, ...crossSession].some(completed => completed.needsHydration === false
+          && resolves(event, completed)))
       .map(event => event.eventId)
     const retained = new Set(pending
       .filter(event => (event.unresolvedParent && !unresolvedAck.includes(event.eventId))
-        || (event.needsHydration && !hydrationAck.includes(event.eventId)))
+        || (event.needsHydration && !event.resolvesEventId && !hydrationAck.includes(event.eventId)))
       .map(event => event.eventId))
     const reduciblePending = pending.filter(event => !event.unresolvedParent)
     if (!previous && reduciblePending.length === 0 && local.length === 0) {
-      await journal.ack(key, [...unresolvedAck, ...hydrationAck])
+      await journal.ack(key, pending.filter(event => !retained.has(event.eventId)).map(event => event.eventId))
       return {
         status: retained.size > 0 ? 'queued' : 'ignored',
         forwarded: [...forwarded],
