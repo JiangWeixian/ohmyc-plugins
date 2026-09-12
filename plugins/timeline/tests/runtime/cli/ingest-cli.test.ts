@@ -9,6 +9,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { closeDatabase, openDatabase } from '@ohmyc/timeline'
 import {
@@ -177,6 +178,38 @@ describe('dist/ingest.mjs (node entry)', () => {
     expect(readDb(db => db.prepare(
       'SELECT agent_name FROM sessions WHERE session_id = ?',
     ).get('cursor:c1'))).toEqual({ agent_name: 'cursor' })
+  })
+
+  it('replays a hook after database opening fails under a write lock', () => {
+    readDb(() => undefined)
+    const locked = new DatabaseSync(path.join(dbDir, 'timeline.db'))
+    locked.exec('BEGIN IMMEDIATE')
+    try {
+      const result = run(['--hook', 'cursor'], JSON.stringify({
+        hook_event_name: 'postToolUse',
+        conversation_id: 'busy-session',
+        generation_id: 'busy-turn',
+        tool_use_id: 'busy-read',
+        tool_name: 'Read',
+        workspace_roots: ['/tmp/demo'],
+      }))
+      expect(result.status).toBe(0)
+      expect(result.stdout).toBe('')
+      expect(locked.prepare('SELECT count(*) AS count FROM sessions').get()).toEqual({ count: 0 })
+    } finally {
+      locked.exec('ROLLBACK')
+      locked.close()
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(run(['--replay-pending']).status).toBe(0)
+      expect(readDb(db => db.prepare(
+        'SELECT session_id, turns FROM sessions',
+      ).all())).toEqual([{ session_id: 'cursor:busy-session', turns: 0 }])
+      expect(readDb(db => db.prepare(
+        'SELECT session_id, tool_name, call_count FROM session_tools',
+      ).all())).toEqual([{ session_id: 'cursor:busy-session', tool_name: 'Read', call_count: 1 }])
+    }
   })
 
   it('detects native hook hosts without opening the database', () => {

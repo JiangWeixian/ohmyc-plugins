@@ -118,6 +118,32 @@ describe('hydrateGrok', () => {
     expect(toSnapshot(reduceEvents(null, [event, ...first, ...resumed, ...rewound]))?.tokensInput).toBe(3)
   })
 
+  it('keeps a completed turn pending until cumulative usage reaches its stop timestamp', async () => {
+    const { home, directory } = await sessionHome()
+    await copyFixture('summary.json', path.join(directory, 'summary.json'))
+    const usagePath = path.join(directory, 'usage.json')
+    const stop = request('g1', { timestamp: '2026-09-12T10:31:45Z' })
+    await writeFile(usagePath, JSON.stringify({
+      sessionId: 'g1', updatedAt: '2026-09-12T10:30:45Z',
+      session: { inputTokens: 10, outputTokens: 2, cachedReadTokens: 0 },
+    }))
+
+    const stale = await hydrateGrok([stop], home)
+    expect(stale.some(event => event.resolvesEventId === stop.eventId)).toBe(false)
+    expect(toSnapshot(reduceEvents(null, [stop, ...stale]))?.tokensInput).toBe(10)
+
+    await writeFile(usagePath, JSON.stringify({
+      sessionId: 'g1', updatedAt: '2026-09-12T10:31:45.200Z',
+      session: { inputTokens: 17, outputTokens: 4, cachedReadTokens: 3 },
+    }))
+    const current = await hydrateGrok([stop, ...stale], home)
+    expect(current.some(event => event.resolvesEventId === stop.eventId
+      && event.needsHydration === false)).toBe(true)
+    expect(toSnapshot(reduceEvents(null, [stop, ...stale, ...current]))).toMatchObject({
+      tokensInput: 14, tokensOutput: 4, tokensCached: 3,
+    })
+  })
+
   it('keeps known usage and the exact request pending when usage is partial on disk', async () => {
     const { home, directory } = await sessionHome()
     await copyFixture('summary.json', path.join(directory, 'summary.json'))

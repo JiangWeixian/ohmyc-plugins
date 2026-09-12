@@ -1852,6 +1852,7 @@ async function hydrateGrok(events, grokHome2) {
   const output = [metadataEvent(summary, usage, exemplar)];
   if (usage.usage.status === "partial") return output;
   for (const request of requests) {
+    if (request.turnId && request.sourceAt !== void 0 && usage.sourceAt !== void 0 && usage.sourceAt < request.sourceAt) continue;
     output.push(event2({
       ...withoutIdentity2(request),
       project: summary.project,
@@ -2445,12 +2446,16 @@ function parseHook(host, input) {
   return host === "cursor" ? parseCursorHook(input, observedAt) : parseGrokHook(input, observedAt);
 }
 async function withCollectorWriter(action) {
-  const db = openDatabase();
-  const writer = createWriter(db);
+  let db;
+  let writer;
   try {
-    await action((data) => writer.writeSession(data));
+    await action((data) => {
+      db ??= openDatabase();
+      writer ??= createWriter(db);
+      return writer.writeSession(data);
+    });
   } finally {
-    closeDatabase(db);
+    if (db) closeDatabase(db);
   }
 }
 async function runHookMode(requestedHost) {

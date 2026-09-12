@@ -136,12 +136,16 @@ function parseHook(host: Host, input: unknown): CollectorEvent[] {
 async function withCollectorWriter(
   action: (write: ReturnType<typeof createWriter>['writeSession']) => Promise<void>,
 ): Promise<void> {
-  const db = openDatabase()
-  const writer = createWriter(db)
+  let db: ReturnType<typeof openDatabase> | undefined
+  let writer: ReturnType<typeof createWriter> | undefined
   try {
-    await action(data => writer.writeSession(data))
+    await action(data => {
+      db ??= openDatabase()
+      writer ??= createWriter(db)
+      return writer.writeSession(data)
+    })
   } finally {
-    closeDatabase(db)
+    if (db) closeDatabase(db)
   }
 }
 

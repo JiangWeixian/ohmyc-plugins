@@ -311,6 +311,8 @@ export async function hydrateGrok(
   const output: CollectorEvent[] = [metadataEvent(summary, usage, exemplar)]
   if (usage.usage.status === 'partial') return output
   for (const request of requests) {
+    if (request.turnId && request.sourceAt !== undefined
+      && usage.sourceAt !== undefined && usage.sourceAt < request.sourceAt) continue
     output.push(event({
       ...withoutIdentity(request),
       project: summary.project,
