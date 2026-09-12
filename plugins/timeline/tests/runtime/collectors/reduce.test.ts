@@ -130,6 +130,23 @@ it('keeps child calls distinct without adding child user turns', () => {
   })
 })
 
+it('does not create activity from child confirmation or usage facts', () => {
+  expect(toSnapshot(reduceEvents(null, [
+    event('child-confirm', {
+      sourceSessionId: 'child',
+      turnId: 'child-turn',
+      confirmsTurn: true,
+    }),
+  ]))).toBeNull()
+
+  expect(toSnapshot(reduceEvents(null, [
+    event('child-usage', {
+      sourceSessionId: 'child',
+      usage: { input: 10, output: 5, cached: 2, status: 'complete' },
+    }),
+  ]))).toBeNull()
+})
+
 it('does not let child or unresolved facts project onto root metadata and usage', () => {
   const snapshot = toSnapshot(reduceEvents(null, [
     event('root', {

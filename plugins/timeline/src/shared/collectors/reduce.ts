@@ -60,7 +60,9 @@ export function toSnapshot(state: CollectorState): ParsedSessionData | null {
       prompts.set(event.turnId, event.prompt)
     }
     if (rootEvent(event) && event.turnId && event.confirmsTurn) confirmed.add(event.turnId)
-    if (event.confirmsTurn || event.tool || event.usage) hasActivity = true
+    if (event.tool || (rootEvent(event) && (event.confirmsTurn || event.usage))) {
+      hasActivity = true
+    }
     if (event.tool) {
       const source = event.sourceSessionId ?? event.nativeSessionId
       const key = JSON.stringify([source, event.turnId ?? '', event.tool.id])
