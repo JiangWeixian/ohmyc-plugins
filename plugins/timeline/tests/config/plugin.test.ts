@@ -158,15 +158,15 @@ describe('Codex marketplace entry', () => {
 })
 
 describe('hook configuration compatibility', () => {
-  it('routes the default plugin Stop hook to the Codex and Claude entrypoints', () => {
+  it('routes the default plugin Stop hook through the shared dispatcher', () => {
     const hooksJson = JSON.parse(
       readFileSync(path.resolve(import.meta.dirname, '../../hooks/hooks.json'), 'utf8'),
     ) as { hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> } }
 
     const command = hooksJson.hooks.Stop[0].hooks[0].command
-    expect(command).toContain('$' + '{PLUGIN_ROOT}/hooks/ingest-codex.sh')
-    expect(command).toContain('$' + '{CLAUDE_PLUGIN_ROOT}/hooks/ingest-claude.sh')
-    expect(command).toContain('$CLAUDE_SESSION_ID')
+    expect(command).toContain('/hooks/shared/ingest-stop.sh')
+    expect(command).toContain('PLUGIN_ROOT')
+    expect(command).toContain('CLAUDE_PLUGIN_ROOT')
   })
 })
 

@@ -5,15 +5,16 @@ import os from "os";
 import path from "path";
 import { Database } from "bun:sqlite";
 
-// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-KNZ4ZVYP.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-TD6MF4ZL.js
 function createWriter(db) {
   const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
   const upsertSession = db.prepare(`
     INSERT OR REPLACE INTO sessions (
       session_id, project, agent_name, started_at, ended_at, duration_ms,
       turns, tokens_input, tokens_output, tokens_cached,
-      summary, summary_source, transcript_path, last_offset, ingested_at, model
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      summary, summary_source, transcript_path, last_offset, ingested_at, model,
+      token_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const deleteTools = db.prepare("DELETE FROM session_tools WHERE session_id = ?");
   const insertTool = db.prepare("INSERT OR REPLACE INTO session_tools (session_id, tool_name, call_count) VALUES (?, ?, ?)");
@@ -26,7 +27,7 @@ function createWriter(db) {
       const sessionsUpdated = existingRow ? 1 : 0;
       const ingestedAt = Date.now();
       const transaction = db.transaction(() => {
-        upsertSession.run(data.sessionId, data.project, data.agentName, data.startedAt, data.endedAt, data.durationMs, data.turns, data.tokensInput, data.tokensOutput, data.tokensCached, data.summary, data.summarySource, data.transcriptPath, data.fileSize, ingestedAt, data.model);
+        upsertSession.run(data.sessionId, data.project, data.agentName, data.startedAt, data.endedAt, data.durationMs, data.turns, data.tokensInput, data.tokensOutput, data.tokensCached, data.summary, data.summarySource, data.transcriptPath, data.fileSize, ingestedAt, data.model, data.tokenStatus ?? "legacy");
         deleteTools.run(data.sessionId);
         for (const tool of data.tools) {
           insertTool.run(data.sessionId, tool.toolName, tool.callCount);
@@ -47,8 +48,8 @@ function createWriter(db) {
   };
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@0.0.0-snapshot-20260614095355/node_modules/@ohmyc/timeline/dist/chunk-VIS7HKQB.js
-var CURRENT_SCHEMA_VERSION = 3;
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
+var CURRENT_SCHEMA_VERSION = 4;
 var SCHEMA_SQL = `
 CREATE TABLE sessions (
   session_id        TEXT PRIMARY KEY,
@@ -66,7 +67,9 @@ CREATE TABLE sessions (
   transcript_path   TEXT NOT NULL,
   last_offset       INTEGER NOT NULL,
   ingested_at       INTEGER NOT NULL,
-  model             TEXT
+  model             TEXT,
+  token_status      TEXT NOT NULL DEFAULT 'legacy'
+                    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'))
 );
 
 CREATE INDEX idx_sessions_started_at ON sessions(started_at DESC);

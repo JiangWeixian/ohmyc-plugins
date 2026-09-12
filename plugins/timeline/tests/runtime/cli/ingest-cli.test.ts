@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -42,9 +43,9 @@ describe('dist/ingest.mjs (node entry)', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  function run(args: string[], stdin?: string) {
+  function run(args: string[], stdin?: string, env: NodeJS.ProcessEnv = {}) {
     return spawnSync('node', [INGEST_MJS, ...args], {
-      env: { ...process.env, OHMYC_HOME: dbDir },
+      env: { ...process.env, OHMYC_HOME: dbDir, ...env },
       input: stdin,
       encoding: 'utf8',
     })
@@ -160,6 +161,83 @@ describe('dist/ingest.mjs (node entry)', () => {
 
     expect(row?.session_id).toBe('session-bbb')
     expect(row?.project).toBe('demo')
+  })
+
+  it('ingests a Cursor hook from stdin', () => {
+    const result = run(['--hook', 'cursor'], JSON.stringify({
+      hook_event_name: 'postToolUse',
+      conversation_id: 'c1',
+      generation_id: 't1',
+      tool_use_id: 'call1',
+      tool_name: 'Shell',
+      workspace_roots: ['/tmp/demo'],
+    }))
+
+    expect(result.status).toBe(0)
+    expect(readDb(db => db.prepare(
+      'SELECT agent_name FROM sessions WHERE session_id = ?',
+    ).get('cursor:c1'))).toEqual({ agent_name: 'cursor' })
+  })
+
+  it('detects native hook hosts without opening the database', () => {
+    const result = run(['--detect-host'], JSON.stringify({
+      sessionId: 'g1',
+      hookEventName: 'stop',
+    }))
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('grok\n')
+    expect(result.stderr).toBe('')
+    expect(existsSync(path.join(dbDir, 'timeline.db'))).toBe(false)
+  })
+
+  it('prefers native payload evidence over inherited host variables', () => {
+    const result = run(['--detect-host'], JSON.stringify({
+      sessionId: 'g1',
+      hookEventName: 'stop',
+    }), { CURSOR_VERSION: 'fixture' })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('grok\n')
+  })
+
+  it('deduplicates one native Grok event across native and compatibility loading', () => {
+    const payload = JSON.stringify({
+      sessionId: 'g1',
+      hookEventName: 'post_tool_use',
+      hook_event_name: 'PostToolUse',
+      promptId: 'p1',
+      toolUseId: 'call1',
+      toolName: 'read_file',
+      workspaceRoot: '/tmp/demo',
+    })
+
+    expect(run(['--hook', 'auto'], payload, { CLAUDE_PLUGIN_ROOT: '/compat' }).status).toBe(0)
+    expect(run(['--hook', 'auto'], payload, { GROK_HOME: '/native' }).status).toBe(0)
+    expect(readDb(db => db.prepare(
+      'SELECT call_count FROM session_tools WHERE session_id = ? AND tool_name = ?',
+    ).get('grok:g1', 'read_file'))).toEqual({ call_count: 1 })
+  })
+
+  it('replays pending collector events', () => {
+    const result = run(['--replay-pending'])
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+  })
+
+  it('rejects multiple write modes', () => {
+    const result = run(['--hook', 'cursor', '--raw'], '{}')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('--hook, --raw, --replay-pending, and disk mode are mutually exclusive')
+  })
+
+  it('rejects invalid hook JSON', () => {
+    const result = run(['--hook', 'cursor'], 'not json')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('invalid JSON on stdin')
   })
 
   it('ingests pre-parsed JSON from an installed Codex cache without node_modules', () => {
