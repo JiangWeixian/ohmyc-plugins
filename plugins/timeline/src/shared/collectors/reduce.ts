@@ -77,14 +77,33 @@ export function toSnapshot(state: CollectorState): ParsedSessionData | null {
   if (!hasActivity && confirmedPrompts.length === 0) return null
 
   const rootEvents = events.filter(rootEvent)
-  const latestText = (select: (event: CollectorEvent) => string | undefined): string | undefined => {
-    let value: string | undefined
+  const rootEventsById = new Map(rootEvents.map(event => [event.eventId, event]))
+  const exactResolutions = new Map<string, CollectorEvent[]>()
+  for (const event of rootEvents) {
+    if (event.needsHydration !== false || !event.resolvesEventId) continue
+    const original = rootEventsById.get(event.resolvesEventId)
+    if (!original || original.needsHydration !== true || eventTime(original) !== eventTime(event)) continue
+    const resolutions = exactResolutions.get(original.eventId) ?? []
+    resolutions.push(event)
+    exactResolutions.set(original.eventId, resolutions)
+  }
+  const latestValue = <T>(
+    select: (event: CollectorEvent) => T | undefined,
+    usable: (value: T | undefined) => value is T,
+  ): T | undefined => {
+    let value: T | undefined
     for (const event of rootEvents) {
       const candidate = select(event)
-      if (hasText(candidate)) value = candidate
+      if (!usable(candidate)) continue
+      const superseded = exactResolutions.get(event.eventId)
+        ?.some(resolution => usable(select(resolution))) ?? false
+      if (!superseded) value = candidate
     }
     return value
   }
+  const latestText = (select: (event: CollectorEvent) => string | undefined): string | undefined => (
+    latestValue(select, hasText)
+  )
 
   let usage: Usage | undefined
   for (const event of rootEvents) {
@@ -118,7 +137,7 @@ export function toSnapshot(state: CollectorState): ParsedSessionData | null {
     summary,
     summarySource: title || !firstPrompt ? 'auto' : 'first_message',
     transcriptPath: latestText(event => event.transcriptPath) ?? `${state.agent}://${state.nativeSessionId}`,
-    fileSize: [...rootEvents].reverse().find(event => event.fileSize !== undefined)?.fileSize ?? 0,
+    fileSize: latestValue(event => event.fileSize, (value): value is number => value !== undefined) ?? 0,
     tools: [...toolCounts]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([toolName, callCount]) => ({ toolName, callCount })),

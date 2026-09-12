@@ -2148,14 +2148,27 @@ function toSnapshot(state) {
   const confirmedPrompts = [...prompts].filter(([turnId2]) => confirmed.has(turnId2)).map(([, prompt]) => prompt);
   if (!hasActivity && confirmedPrompts.length === 0) return null;
   const rootEvents = events.filter(rootEvent);
-  const latestText = (select) => {
+  const rootEventsById = new Map(rootEvents.map((event3) => [event3.eventId, event3]));
+  const exactResolutions = /* @__PURE__ */ new Map();
+  for (const event3 of rootEvents) {
+    if (event3.needsHydration !== false || !event3.resolvesEventId) continue;
+    const original = rootEventsById.get(event3.resolvesEventId);
+    if (!original || original.needsHydration !== true || eventTime(original) !== eventTime(event3)) continue;
+    const resolutions = exactResolutions.get(original.eventId) ?? [];
+    resolutions.push(event3);
+    exactResolutions.set(original.eventId, resolutions);
+  }
+  const latestValue = (select, usable) => {
     let value;
     for (const event3 of rootEvents) {
       const candidate = select(event3);
-      if (hasText2(candidate)) value = candidate;
+      if (!usable(candidate)) continue;
+      const superseded = exactResolutions.get(event3.eventId)?.some((resolution) => usable(select(resolution))) ?? false;
+      if (!superseded) value = candidate;
     }
     return value;
   };
+  const latestText = (select) => latestValue(select, hasText2);
   let usage;
   for (const event3 of rootEvents) {
     if (validUsage(event3.usage)) usage = event3.usage;
@@ -2185,7 +2198,7 @@ function toSnapshot(state) {
     summary,
     summarySource: title || !firstPrompt ? "auto" : "first_message",
     transcriptPath: latestText((event3) => event3.transcriptPath) ?? `${state.agent}://${state.nativeSessionId}`,
-    fileSize: [...rootEvents].reverse().find((event3) => event3.fileSize !== void 0)?.fileSize ?? 0,
+    fileSize: latestValue((event3) => event3.fileSize, (value) => value !== void 0) ?? 0,
     tools: [...toolCounts].sort(([a], [b]) => a.localeCompare(b)).map(([toolName, callCount]) => ({ toolName, callCount })),
     skills: [...skills].sort((a, b) => a.localeCompare(b)),
     model: latestText((event3) => event3.model) ?? null

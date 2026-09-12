@@ -90,6 +90,65 @@ it('orders metadata by source time and tolerates missing paths and models', () =
   })
 })
 
+it.each([
+  ['z-original', 'a-resolution'],
+  ['a-original', 'z-resolution'],
+])('lets an exact same-time resolution supersede original metadata (%s -> %s)', (
+  originalId,
+  resolutionId,
+) => {
+  const snapshot = toSnapshot(reduceEvents(null, [
+    event(originalId, {
+      sourceAt: 1200,
+      confirmsTurn: true,
+      project: '/workspace/',
+      model: 'original-model',
+      title: 'Original title',
+      transcriptPath: '/original/transcript.jsonl',
+      fileSize: 10,
+      needsHydration: true,
+    }),
+    event(resolutionId, {
+      sourceAt: 1200,
+      resolvesEventId: originalId,
+      project: '/workspace',
+      model: 'resolved-model',
+      title: 'Resolved title',
+      transcriptPath: '/resolved/transcript.jsonl',
+      fileSize: 20,
+      needsHydration: false,
+    }),
+  ]))
+
+  expect(snapshot).toMatchObject({
+    project: '/workspace',
+    model: 'resolved-model',
+    summary: 'Resolved title',
+    transcriptPath: '/resolved/transcript.jsonl',
+    fileSize: 20,
+  })
+})
+
+it('keeps event-id ordering for unrelated and unmatched same-time metadata', () => {
+  const ordinary = toSnapshot(reduceEvents(null, [
+    event('a-ordinary', { sourceAt: 1200, confirmsTurn: true, project: '/early-id' }),
+    event('z-ordinary', { sourceAt: 1200, project: '/late-id' }),
+  ]))
+  const unmatched = toSnapshot(reduceEvents(null, [
+    event('a-completion', {
+      sourceAt: 1200,
+      resolvesEventId: 'missing-request',
+      needsHydration: false,
+      confirmsTurn: true,
+      project: '/unmatched-completion',
+    }),
+    event('z-authoritative', { sourceAt: 1200, project: '/authoritative' }),
+  ]))
+
+  expect(ordinary?.project).toBe('/late-id')
+  expect(unmatched?.project).toBe('/authoritative')
+})
+
 it('counts distinct turn and tool ids even when their contents match', () => {
   const snapshot = toSnapshot(reduceEvents(null, [
     event('p1', { turnId: 't1', prompt: 'same' }),
