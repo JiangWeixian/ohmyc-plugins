@@ -98,15 +98,15 @@ Cursor CLI `2026.09.10-fd3934a` can load the plugin directly from a checkout:
 cursor-agent --plugin-dir "$(pwd)/plugins/timeline" --workspace /path/to/project
 ```
 
-You can also add this repository to Cursor's marketplace index:
+You can also add this repository to Cursor's marketplace index for discovery:
 
 ```bash
 cursor-agent plugin marketplace add https://github.com/JiangWeixian/ohmyc-plugins.git
 ```
 
-This Cursor CLI version exposes marketplace management but no CLI plugin
-install command. Install **timeline** from the marketplace in a Cursor client,
-or keep using `--plugin-dir` for local CLI sessions.
+This Cursor CLI version exposes marketplace indexing but no CLI plugin install
+command. Use `--plugin-dir` to run the plugin in verified local CLI sessions;
+adding the marketplace alone does not install or execute it.
 
 Cursor collection begins with events observed after installation. If Cursor
 does not provide `transcript_path`, Timeline still records observable lifecycle
