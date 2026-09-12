@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
@@ -131,4 +133,50 @@ describe('collector journal', () => {
     expect(await withSessionLock(root, key, async () => 42)).toEqual({ acquired: false })
     expect(existsSync(lock)).toBe(true)
   })
+})
+
+const run = promisify(execFile)
+const lockWorker = path.resolve(import.meta.dirname, '../../fixtures/lock-worker.ts')
+
+it('recovers a dead reclamation guard with competing process reapers', async () => {
+  const root = home()
+  const key = 'cursor:dead-reaper'
+  await run('bun', [lockWorker, root, key, 'crash-reaper'])
+  const results = await Promise.all(Array.from({ length: 3 }, async () => {
+    const { stdout } = await run('bun', [lockWorker, root, key, 'acquire'])
+    return JSON.parse(stdout)
+  }))
+  expect(results).toEqual(Array.from({ length: 3 }, () => ({ acquired: true, value: 'exclusive' })))
+  expect(existsSync(path.join(directory(root, key), 'lock.reclaim'))).toBe(false)
+  expect(await withSessionLock(root, key, async () => 42)).toEqual({ acquired: true, value: 42 })
+})
+
+it.each(['live', 'malformed', 'eperm'])('preserves a %s reclamation guard', async kind => {
+  const root = home()
+  const key = 'cursor:guard'
+  await withSessionLock(root, key, async () => undefined)
+  const lock = path.join(directory(root, key), 'lock')
+  writeFileSync(lock, JSON.stringify({ pid: 2_147_483_647, token: 'dead' }))
+  const guard = kind === 'malformed' ? '{' : JSON.stringify({ pid: process.pid, token: 'preserved' })
+  writeFileSync(`${lock}.reclaim`, guard)
+  if (kind === 'eperm') {
+    const kill = process.kill.bind(process)
+    vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      if (pid === process.pid) throw Object.assign(new Error('denied'), { code: 'EPERM' })
+      return kill(pid, signal)
+    })
+  }
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  expect(await withSessionLock(root, key, async () => 'stolen')).toEqual({ acquired: false })
+  expect(readFileSync(`${lock}.reclaim`, 'utf8')).toBe(guard)
+})
+
+it('propagates an action EEXIST without retrying the action', async () => {
+  const root = home()
+  let calls = 0
+  await expect(withSessionLock(root, 'cursor:action', async () => {
+    calls++
+    throw Object.assign(new Error('action exists'), { code: 'EEXIST' })
+  })).rejects.toThrow('action exists')
+  expect(calls).toBe(1)
 })

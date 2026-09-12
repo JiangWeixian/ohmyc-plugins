@@ -1,3 +1,4 @@
+import { grokReadSkill } from './skill'
 import { eventKey } from '../../shared/collectors/identity'
 import type { CollectorEvent } from '../../shared/collectors/types'
 
@@ -96,10 +97,14 @@ export function parseGrokHook(input: unknown, observedAt: number): CollectorEven
     const id = text(payload.toolUseId)
     const name = text(payload.toolName)
     if (!id || !name) return []
+    const skill = grokReadSkill(name, payload.toolInput, payload.toolResult,
+      hook === 'post_tool_use' && payload.is_error !== true && payload.isError !== true
+        && payload.toolInputTruncated !== true && payload.toolResultTruncated !== true,
+      text(payload.cwd) ?? text(payload.workspaceRoot))
     return [createEvent({
       ...base,
       confirmsTurn: true,
-      tool: { id, name },
+      tool: { id, name, ...(skill ? { skill } : {}) },
       needsHydration: child ? true : undefined,
     }, observedAt, { ...identity, grokHook: 'tool' })]
   }

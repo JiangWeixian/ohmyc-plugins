@@ -29,28 +29,63 @@ function isDead(pid: number): boolean {
   }
 }
 
-async function reclaimDeadLock(filePath: string, existing: LockRecord): Promise<boolean> {
-  const reclaimPath = `${filePath}.reclaim`
-  let claim: Awaited<ReturnType<typeof open>> | undefined
-  try {
-    claim = await open(reclaimPath, 'wx', 0o600)
-    await claim.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID() }))
-    await claim.sync()
-  } catch (error) {
-    await claim?.close().catch(() => undefined)
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-    throw error
-  }
-  await claim.close()
-  try {
-    const current = await readLock(filePath)
-    if (current?.token !== existing.token || !isDead(current.pid)) return false
+async function releaseLock(filePath: string, token: string): Promise<void> {
+  const current = await readLock(filePath)
+  if (current?.token === token && current.pid === process.pid) {
     await unlink(filePath).catch(error => {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
     })
-    return true
-  } finally {
-    await unlink(reclaimPath).catch(() => undefined)
+  }
+}
+
+async function acquireLock(filePath: string, deadline: number, depth = 0): Promise<string | null> {
+  if (depth > 16) return null
+  const token = randomUUID()
+  while (true) {
+    let file: Awaited<ReturnType<typeof open>> | undefined
+    try {
+      file = await open(filePath, 'wx', 0o600)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    }
+    if (file) {
+      try {
+        await file.writeFile(JSON.stringify({ pid: process.pid, token }))
+        await file.sync()
+      } finally {
+        await file.close()
+      }
+      const current = await readLock(filePath)
+      return current?.token === token && current.pid === process.pid ? token : null
+    }
+
+    const existing = await readLock(filePath)
+    if (!existing) {
+      console.warn(`[timeline] preserving malformed session lock ${filePath}`)
+      return null
+    }
+    if (isDead(existing.pid)) {
+      const guardPath = `${filePath}.reclaim`
+      const guardToken = await acquireLock(guardPath, deadline, depth + 1)
+      if (guardToken) {
+        try {
+          const guard = await readLock(guardPath)
+          const current = await readLock(filePath)
+          if (guard?.token === guardToken && guard.pid === process.pid
+            && current?.token === existing.token && current.pid === existing.pid
+            && isDead(current.pid)) {
+            await unlink(filePath).catch(error => {
+              if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+            })
+          }
+        } finally {
+          await releaseLock(guardPath, guardToken)
+        }
+        continue
+      }
+    }
+    if (Date.now() >= deadline) return null
+    await delay(20)
   }
 }
 
@@ -61,36 +96,11 @@ export async function withSessionLock<T>(
 ): Promise<{ acquired: false } | { acquired: true; value: T }> {
   const filePath = lockPath(home, key)
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 })
-  const token = randomUUID()
-  const deadline = Date.now() + 300
-
-  while (true) {
-    try {
-      const file = await open(filePath, 'wx', 0o600)
-      try {
-        await file.writeFile(JSON.stringify({ pid: process.pid, token }))
-        await file.sync()
-      } finally {
-        await file.close()
-      }
-      try {
-        return { acquired: true, value: await action() }
-      } finally {
-        const current = await readLock(filePath)
-        if (current?.token === token) await unlink(filePath).catch(() => undefined)
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
-      const existing = await readLock(filePath)
-      if (!existing) {
-        console.warn(`[timeline] preserving malformed session lock ${filePath}`)
-        return { acquired: false }
-      }
-      if (isDead(existing.pid)) {
-        if (await reclaimDeadLock(filePath, existing)) continue
-      }
-      if (Date.now() >= deadline) return { acquired: false }
-      await delay(20)
-    }
+  const token = await acquireLock(filePath, Date.now() + 300)
+  if (!token) return { acquired: false }
+  try {
+    return { acquired: true, value: await action() }
+  } finally {
+    await releaseLock(filePath, token)
   }
 }

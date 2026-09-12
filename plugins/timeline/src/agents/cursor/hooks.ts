@@ -1,3 +1,4 @@
+import { cursorReadSkill } from './skill'
 import path from 'node:path'
 import { eventKey } from '../../shared/collectors/identity'
 import type { CollectorEvent } from '../../shared/collectors/types'
@@ -89,13 +90,17 @@ export function parseCursorHook(input: unknown, observedAt: number): CollectorEv
     const id = text(payload.tool_use_id)
     const name = text(payload.tool_name)
     if (!id || !name) return []
+    const skill = cursorReadSkill(name, payload.tool_input, payload.tool_output,
+      hook === 'postToolUse' && payload.is_error !== true && payload.isError !== true
+        && !payload.error_message && !payload.failure_type,
+      text(payload.cwd) ?? project(payload))
     const unresolvedParent = reliableTurnId === undefined && rootSession !== true
       ? true
       : undefined
     return [createEvent({
       ...base,
       confirmsTurn: true,
-      tool: { id, name },
+      tool: { id, name, ...(skill ? { skill } : {}) },
       unresolvedParent,
       needsHydration: unresolvedParent && transcriptPath ? true : undefined,
     }, observedAt, { ...identity, cursorHook: 'tool' })]

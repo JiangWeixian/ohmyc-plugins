@@ -1,7 +1,78 @@
 #!/usr/bin/env node
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-TD6MF4ZL.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
+var CURRENT_SCHEMA_VERSION = 4;
+var SCHEMA_SQL = `
+CREATE TABLE sessions (
+  session_id        TEXT PRIMARY KEY,
+  project           TEXT NOT NULL,
+  agent_name        TEXT,
+  started_at        INTEGER NOT NULL,
+  ended_at          INTEGER NOT NULL,
+  duration_ms       INTEGER NOT NULL,
+  turns             INTEGER NOT NULL,
+  tokens_input      INTEGER NOT NULL DEFAULT 0,
+  tokens_output     INTEGER NOT NULL DEFAULT 0,
+  tokens_cached     INTEGER NOT NULL DEFAULT 0,
+  summary           TEXT,
+  summary_source    TEXT NOT NULL,
+  transcript_path   TEXT NOT NULL,
+  last_offset       INTEGER NOT NULL,
+  ingested_at       INTEGER NOT NULL,
+  model             TEXT,
+  token_status      TEXT NOT NULL DEFAULT 'legacy'
+                    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'))
+);
+
+CREATE INDEX idx_sessions_started_at ON sessions(started_at DESC);
+CREATE INDEX idx_sessions_project    ON sessions(project, started_at DESC);
+
+CREATE TABLE session_tools (
+  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  tool_name   TEXT NOT NULL,
+  call_count  INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (session_id, tool_name)
+);
+
+CREATE TABLE session_skills (
+  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  skill_name  TEXT NOT NULL,
+  PRIMARY KEY (session_id, skill_name)
+);
+
+CREATE TABLE meta (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
+`;
+var MIGRATIONS = {
+  1: "",
+  2: "ALTER TABLE sessions ADD COLUMN model TEXT;",
+  3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;",
+  4: `ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy'
+    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'));`
+};
+
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4XPHLPVI.js
+function ensureTokenStatus(db) {
+  const hasColumn = () => db.prepare("PRAGMA table_info(sessions)").all().some((column) => column.name === "token_status");
+  if (hasColumn()) {
+    return;
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!hasColumn()) {
+      db.exec(MIGRATIONS[4]);
+    }
+    db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version' AND value = '3'").run();
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
 function createWriter(db) {
+  ensureTokenStatus(db);
   const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
   const upsertSession = db.prepare(`
     INSERT OR REPLACE INTO sessions (
@@ -61,7 +132,7 @@ function createWriter(db) {
   };
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-GCV6IZTM.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-DXEDACHN.js
 import { readFileSync, statSync } from "fs";
 import os from "os";
 import path from "path";
@@ -433,60 +504,7 @@ function extractProjectFromPath(transcriptPath) {
   return "unknown";
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
-var CURRENT_SCHEMA_VERSION = 4;
-var SCHEMA_SQL = `
-CREATE TABLE sessions (
-  session_id        TEXT PRIMARY KEY,
-  project           TEXT NOT NULL,
-  agent_name        TEXT,
-  started_at        INTEGER NOT NULL,
-  ended_at          INTEGER NOT NULL,
-  duration_ms       INTEGER NOT NULL,
-  turns             INTEGER NOT NULL,
-  tokens_input      INTEGER NOT NULL DEFAULT 0,
-  tokens_output     INTEGER NOT NULL DEFAULT 0,
-  tokens_cached     INTEGER NOT NULL DEFAULT 0,
-  summary           TEXT,
-  summary_source    TEXT NOT NULL,
-  transcript_path   TEXT NOT NULL,
-  last_offset       INTEGER NOT NULL,
-  ingested_at       INTEGER NOT NULL,
-  model             TEXT,
-  token_status      TEXT NOT NULL DEFAULT 'legacy'
-                    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'))
-);
-
-CREATE INDEX idx_sessions_started_at ON sessions(started_at DESC);
-CREATE INDEX idx_sessions_project    ON sessions(project, started_at DESC);
-
-CREATE TABLE session_tools (
-  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-  tool_name   TEXT NOT NULL,
-  call_count  INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY (session_id, tool_name)
-);
-
-CREATE TABLE session_skills (
-  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-  skill_name  TEXT NOT NULL,
-  PRIMARY KEY (session_id, skill_name)
-);
-
-CREATE TABLE meta (
-  key    TEXT PRIMARY KEY,
-  value  TEXT NOT NULL
-);
-`;
-var MIGRATIONS = {
-  1: "",
-  2: "ALTER TABLE sessions ADD COLUMN model TEXT;",
-  3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;",
-  4: `ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy'
-    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'));`
-};
-
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-WK4NZMZ4.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-WK4NZMZ4.js
 function migrate(db, options) {
   const targetVersion = options?.currentSchemaVersion ?? CURRENT_SCHEMA_VERSION;
   const migrations = options?.migrations ?? MIGRATIONS;
@@ -528,7 +546,7 @@ function migrate(db, options) {
   applyMigrations();
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-3K3NWBLL.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-3K3NWBLL.js
 function openNodeSqliteDatabase(dbPath) {
   let nativeDb;
   try {
@@ -579,7 +597,7 @@ function isMissingNodeSqlite(error) {
   return error instanceof Error && (error.message.includes("node:sqlite") || error.message.includes("No such built-in module") || error.message.includes("Unknown built-in module"));
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/index.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/index.js
 import { mkdirSync } from "fs";
 import os2 from "os";
 import path2 from "path";
@@ -1188,10 +1206,41 @@ var cac = (name = "") => new CAC(name);
 
 // src/ingest.ts
 import os3 from "os";
-import path7 from "path";
+import path8 from "path";
+
+// src/shared/collectors/skill.ts
+import path3 from "path";
+function skillFromReadPaths(input, output, cwd) {
+  if (typeof input !== "string" || !input.trim() || typeof output !== "string" || !path3.isAbsolute(output)) return void 0;
+  if (!path3.isAbsolute(input) && (!cwd || !path3.isAbsolute(cwd))) return void 0;
+  const requested = path3.resolve(cwd ?? "/", input);
+  if (requested !== path3.normalize(output) || path3.basename(requested) !== "SKILL.md") return void 0;
+  const skill = path3.basename(path3.dirname(requested));
+  return skill || void 0;
+}
+
+// src/agents/cursor/skill.ts
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function cursorReadSkill(name, input, output, succeeded, cwd) {
+  if (!succeeded || name !== "Read") return void 0;
+  let result = output;
+  if (typeof result === "string") {
+    try {
+      result = JSON.parse(result);
+    } catch {
+      return void 0;
+    }
+  }
+  const read = object(result);
+  if (!read || read.is_error === true || read.isError === true) return void 0;
+  if (typeof read.content_length !== "number" || !Number.isInteger(read.content_length) || read.content_length < 0) return void 0;
+  return skillFromReadPaths(object(input)?.file_path, read.file_path, cwd);
+}
 
 // src/agents/cursor/hooks.ts
-import path3 from "path";
+import path4 from "path";
 
 // src/shared/collectors/identity.ts
 import { createHash } from "crypto";
@@ -1231,7 +1280,7 @@ function detectHost(input, env) {
 }
 
 // src/agents/cursor/hooks.ts
-function object(value) {
+function object2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text(value) {
@@ -1245,8 +1294,8 @@ function project(payload) {
   const roots = strings(payload.workspace_roots);
   if (!cwd) return roots[0];
   const containing = roots.filter((root) => {
-    const relative = path3.relative(root, cwd);
-    return relative === "" || !relative.startsWith("..") && !path3.isAbsolute(relative);
+    const relative = path4.relative(root, cwd);
+    return relative === "" || !relative.startsWith("..") && !path4.isAbsolute(relative);
   });
   if (containing.length === 1) return containing[0];
   return cwd;
@@ -1259,7 +1308,7 @@ function createEvent(semantic, observedAt, identity) {
   };
 }
 function parseCursorHook(input, observedAt) {
-  const payload = object(input);
+  const payload = object2(input);
   if (!payload || !Number.isFinite(observedAt)) return [];
   const nativeSessionId = text(payload.conversation_id);
   const hook = text(payload.hook_event_name);
@@ -1296,11 +1345,18 @@ function parseCursorHook(input, observedAt) {
     const id = text(payload.tool_use_id);
     const name = text(payload.tool_name);
     if (!id || !name) return [];
+    const skill = cursorReadSkill(
+      name,
+      payload.tool_input,
+      payload.tool_output,
+      hook === "postToolUse" && payload.is_error !== true && payload.isError !== true && !payload.error_message && !payload.failure_type,
+      text(payload.cwd) ?? project(payload)
+    );
     const unresolvedParent = reliableTurnId === void 0 && rootSession !== true ? true : void 0;
     return [createEvent({
       ...base,
       confirmsTurn: true,
-      tool: { id, name },
+      tool: { id, name, ...skill ? { skill } : {} },
       unresolvedParent,
       needsHydration: unresolvedParent && transcriptPath ? true : void 0
     }, observedAt, { ...identity, cursorHook: "tool" })];
@@ -1323,14 +1379,14 @@ function parseCursorHook(input, observedAt) {
 // src/agents/cursor/transcript.ts
 import { createHash as createHash2 } from "crypto";
 import { readFile, stat } from "fs/promises";
-function object2(value) {
+function object3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.flatMap((block) => {
-    const value = object2(block);
+    const value = object3(block);
     return value?.type === "text" && typeof value.text === "string" ? [value.text] : [];
   }).join("\n");
 }
@@ -1365,7 +1421,7 @@ async function readTranscript(transcriptPath) {
   for (const [index, line] of lines.entries()) {
     if (!line.trim()) continue;
     try {
-      const value = object2(JSON.parse(line));
+      const value = object3(JSON.parse(line));
       if (value) parsed.push(value);
     } catch {
       if (index === lines.length - 1 && !hasTrailingNewline) {
@@ -1378,11 +1434,28 @@ async function readTranscript(transcriptPath) {
   }
   const occurrences = /* @__PURE__ */ new Map();
   const turns = [];
+  const pendingTools = /* @__PURE__ */ new Map();
   let current;
   for (const row of parsed) {
     const role = typeof row.role === "string" ? row.role : void 0;
-    const message = object2(row.message);
+    const message = object3(row.message);
     const content = contentText(message?.content);
+    const blocks = Array.isArray(message?.content) ? message.content : [];
+    for (const block of blocks) {
+      const result = object3(block);
+      if (result?.type !== "tool_result" || typeof result.tool_use_id !== "string") continue;
+      const pending = pendingTools.get(result.tool_use_id);
+      if (!pending) continue;
+      const skill = cursorReadSkill(
+        pending.tool.name,
+        pending.input,
+        result.content,
+        result.is_error !== true && result.isError !== true
+      );
+      if (skill) pending.tool.skill = skill;
+      pendingTools.delete(result.tool_use_id);
+    }
+    if (role === "user" && blocks.some((block) => object3(block)?.type === "tool_result")) continue;
     if (role === "user") {
       const prompt = nativeUserQuery(content);
       if (!prompt) {
@@ -1394,13 +1467,14 @@ async function readTranscript(transcriptPath) {
       current = { prompt, ordinal, hasAssistantActivity: false, tools: [] };
       turns.push(current);
     } else if (role === "assistant" && current) {
-      const blocks = Array.isArray(message?.content) ? message.content : [];
-      const hasTool = blocks.some((block) => object2(block)?.type === "tool_use");
+      const hasTool = blocks.some((block) => object3(block)?.type === "tool_use");
       if (content.trim() || hasTool) current.hasAssistantActivity = true;
       for (const block of blocks) {
-        const tool = object2(block);
+        const tool = object3(block);
         if (tool?.type === "tool_use" && typeof tool.id === "string" && tool.id.trim() && typeof tool.name === "string" && tool.name.trim()) {
-          current.tools.push({ id: tool.id, name: tool.name });
+          const collected = { id: tool.id, name: tool.name };
+          current.tools.push(collected);
+          pendingTools.set(tool.id, { tool: collected, input: tool.input });
         }
       }
     }
@@ -1497,6 +1571,18 @@ async function hydrateCursor(events) {
   return output;
 }
 
+// src/agents/grok/skill.ts
+function object4(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function grokReadSkill(name, input, output, succeeded, cwd) {
+  if (!succeeded || name !== "read_file") return void 0;
+  const result = object4(output);
+  const content = object4(result?.FileContent);
+  if (result?.type !== "ReadFile" || "FileNotFound" in result || result.is_error === true || result.isError === true || typeof content?.content !== "string") return void 0;
+  return skillFromReadPaths(object4(input)?.target_file, content.absolute_path, cwd);
+}
+
 // src/agents/grok/hooks.ts
 var compatibilityEvents = {
   SessionStart: "session_start",
@@ -1518,7 +1604,7 @@ var confirms = /* @__PURE__ */ new Set([
   "stop_failure",
   "stop_cancelled"
 ]);
-function object3(value) {
+function object5(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text2(value) {
@@ -1537,7 +1623,7 @@ function createEvent2(semantic, observedAt, identity = {}) {
   };
 }
 function parseGrokHook(input, observedAt) {
-  const payload = object3(input);
+  const payload = object5(input);
   if (!payload || !Number.isFinite(observedAt)) return [];
   const nativeSessionId = text2(payload.sessionId);
   const nativeHook = text2(payload.hookEventName);
@@ -1577,10 +1663,17 @@ function parseGrokHook(input, observedAt) {
     const id = text2(payload.toolUseId);
     const name = text2(payload.toolName);
     if (!id || !name) return [];
+    const skill = grokReadSkill(
+      name,
+      payload.toolInput,
+      payload.toolResult,
+      hook === "post_tool_use" && payload.is_error !== true && payload.isError !== true && payload.toolInputTruncated !== true && payload.toolResultTruncated !== true,
+      text2(payload.cwd) ?? text2(payload.workspaceRoot)
+    );
     return [createEvent2({
       ...base,
       confirmsTurn: true,
-      tool: { id, name },
+      tool: { id, name, ...skill ? { skill } : {} },
       needsHydration: child ? true : void 0
     }, observedAt, { ...identity, grokHook: "tool" })];
   }
@@ -1609,8 +1702,8 @@ function parseGrokHook(input, observedAt) {
 
 // src/agents/grok/session.ts
 import { readdir, readFile as readFile2, stat as stat2 } from "fs/promises";
-import path4 from "path";
-function object4(value) {
+import path5 from "path";
+function object6(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text3(value) {
@@ -1632,8 +1725,8 @@ function withoutIdentity2(source) {
   return semantic;
 }
 function parseGrokUsage(input, nativeSessionId) {
-  const payload = object4(input);
-  const session = object4(payload?.session);
+  const payload = object6(input);
+  const session = object6(payload?.session);
   if (text3(payload?.sessionId) !== nativeSessionId || !session) return null;
   const inputTokens = session.inputTokens;
   const outputTokens = session.outputTokens;
@@ -1662,11 +1755,11 @@ async function stableRead(filePath) {
 function parseSummary(file, expectedId) {
   let payload;
   try {
-    payload = object4(JSON.parse(file.raw));
+    payload = object6(JSON.parse(file.raw));
   } catch {
     return null;
   }
-  const info = object4(payload?.info);
+  const info = object6(payload?.info);
   if (text3(info?.id) !== expectedId) return null;
   if (payload?.chat_format_version !== 1) {
     console.warn("[timeline] unsupported Grok chat format");
@@ -1679,7 +1772,7 @@ function parseSummary(file, expectedId) {
     model: text3(payload?.current_model_id),
     updatedAt: timestamp(payload?.updated_at),
     kind: text3(payload?.session_kind) ?? "",
-    directory: path4.dirname(file.path),
+    directory: path5.dirname(file.path),
     fileSize: file.size,
     mtimeMs: file.mtimeMs,
     parentId: text3(payload?.parent_session_id)
@@ -1695,7 +1788,7 @@ async function directoriesNamed(root, expectedId) {
   }
   for (const project2 of projects) {
     if (!project2.isDirectory()) continue;
-    const projectPath = path4.join(root, project2.name);
+    const projectPath = path5.join(root, project2.name);
     if (project2.name === expectedId) found.push(projectPath);
     let sessions;
     try {
@@ -1705,7 +1798,7 @@ async function directoriesNamed(root, expectedId) {
     }
     for (const session of sessions) {
       if (session.isDirectory() && session.name === expectedId) {
-        found.push(path4.join(projectPath, session.name));
+        found.push(path5.join(projectPath, session.name));
       }
     }
   }
@@ -1714,11 +1807,11 @@ async function directoriesNamed(root, expectedId) {
 async function locateSummary(events, grokHome2, expectedId) {
   const candidates = [];
   for (const transcriptPath of events.map((item) => item.transcriptPath)) {
-    if (transcriptPath) candidates.push(path4.dirname(transcriptPath));
+    if (transcriptPath) candidates.push(path5.dirname(transcriptPath));
   }
-  candidates.push(...await directoriesNamed(path4.join(grokHome2, "sessions"), expectedId));
+  candidates.push(...await directoriesNamed(path5.join(grokHome2, "sessions"), expectedId));
   for (const directory of [...new Set(candidates)]) {
-    const file = await stableRead(path4.join(directory, "summary.json"));
+    const file = await stableRead(path5.join(directory, "summary.json"));
     if (!file) continue;
     const summary = parseSummary(file, expectedId);
     if (summary) return summary;
@@ -1726,7 +1819,7 @@ async function locateSummary(events, grokHome2, expectedId) {
   return null;
 }
 async function readUsage(summary) {
-  const file = await stableRead(path4.join(summary.directory, "usage.json"));
+  const file = await stableRead(path5.join(summary.directory, "usage.json"));
   if (!file) return null;
   let payload;
   try {
@@ -1736,20 +1829,20 @@ async function readUsage(summary) {
   }
   const usage = parseGrokUsage(payload, summary.id);
   if (!usage) return null;
-  const summaryAfter = await stat2(path4.join(summary.directory, "summary.json")).catch(() => null);
+  const summaryAfter = await stat2(path5.join(summary.directory, "summary.json")).catch(() => null);
   if (!summaryAfter || summaryAfter.size !== summary.fileSize || summaryAfter.mtimeMs !== summary.mtimeMs) return null;
   return {
     usage,
-    sourceAt: timestamp(object4(payload)?.updatedAt),
+    sourceAt: timestamp(object6(payload)?.updatedAt),
     fileSize: file.size
   };
 }
 async function findParent(child, grokHome2) {
   if (child.kind !== "subagent" && child.kind !== "subagent_fork") return null;
-  const sessionsRoot = path4.join(grokHome2, "sessions");
+  const sessionsRoot = path5.join(grokHome2, "sessions");
   if (child.parentId) {
     for (const directory of await directoriesNamed(sessionsRoot, child.parentId)) {
-      const summaryFile = await stableRead(path4.join(directory, "summary.json"));
+      const summaryFile = await stableRead(path5.join(directory, "summary.json"));
       if (!summaryFile) continue;
       const parent = parseSummary(summaryFile, child.parentId);
       if (parent) return parent;
@@ -1763,7 +1856,7 @@ async function findParent(child, grokHome2) {
   }
   for (const project2 of projects) {
     if (!project2.isDirectory()) continue;
-    const projectPath = path4.join(sessionsRoot, project2.name);
+    const projectPath = path5.join(sessionsRoot, project2.name);
     let parents;
     try {
       parents = await readdir(projectPath, { withFileTypes: true });
@@ -1772,8 +1865,8 @@ async function findParent(child, grokHome2) {
     }
     for (const parent of parents) {
       if (!parent.isDirectory()) continue;
-      const parentDirectory = path4.join(projectPath, parent.name);
-      const metaFile = await stableRead(path4.join(
+      const parentDirectory = path5.join(projectPath, parent.name);
+      const metaFile = await stableRead(path5.join(
         parentDirectory,
         "subagents",
         child.id,
@@ -1782,13 +1875,13 @@ async function findParent(child, grokHome2) {
       if (!metaFile) continue;
       let meta;
       try {
-        meta = object4(JSON.parse(metaFile.raw));
+        meta = object6(JSON.parse(metaFile.raw));
       } catch {
         continue;
       }
       const parentId = text3(meta?.parent_session_id);
       if (!parentId || text3(meta?.child_session_id) !== child.id || text3(meta?.subagent_id) !== child.id) continue;
-      const summaryFile = await stableRead(path4.join(parentDirectory, "summary.json"));
+      const summaryFile = await stableRead(path5.join(parentDirectory, "summary.json"));
       if (!summaryFile) continue;
       const parentSummary = parseSummary(summaryFile, parentId);
       if (parentSummary && parentSummary.directory === parentDirectory) return parentSummary;
@@ -1805,7 +1898,7 @@ function metadataEvent(summary, usage, exemplar) {
     project: summary.project,
     title: summary.title,
     model: summary.model,
-    transcriptPath: path4.join(summary.directory, "chat_history.jsonl"),
+    transcriptPath: path5.join(summary.directory, "chat_history.jsonl"),
     fileSize: summary.fileSize + (usage?.fileSize ?? 0),
     sourceAt: usage?.sourceAt ?? summary.updatedAt,
     usage: usage?.usage
@@ -1858,7 +1951,7 @@ async function hydrateGrok(events, grokHome2) {
       project: summary.project,
       model: summary.model,
       title: summary.title,
-      transcriptPath: path4.join(summary.directory, "chat_history.jsonl"),
+      transcriptPath: path5.join(summary.directory, "chat_history.jsonl"),
       rootSession: true,
       unresolvedParent: false,
       needsHydration: false,
@@ -1871,19 +1964,19 @@ async function hydrateGrok(events, grokHome2) {
 // src/shared/collectors/journal.ts
 import { createHash as createHash3, randomUUID } from "crypto";
 import { link, mkdir, open, readdir as readdir2, readFile as readFile3, rename, unlink } from "fs/promises";
-import path5 from "path";
+import path6 from "path";
 var HEX_HASH = /^[a-f0-9]{64}$/;
 function collectorDirectory(home, key) {
   const hash = createHash3("sha256").update(key).digest("hex");
-  return path5.join(home, "collectors", hash);
+  return path6.join(home, "collectors", hash);
 }
 async function ensureDirectory(home, key) {
   const directory = collectorDirectory(home, key);
-  await mkdir(path5.join(directory, "outbox"), { recursive: true, mode: 448 });
+  await mkdir(path6.join(directory, "outbox"), { recursive: true, mode: 448 });
   return directory;
 }
 async function durableWrite(filePath, value) {
-  const tempPath = path5.join(path5.dirname(filePath), `.tmp-${randomUUID()}`);
+  const tempPath = path6.join(path6.dirname(filePath), `.tmp-${randomUUID()}`);
   const file = await open(tempPath, "wx", 384);
   try {
     await file.writeFile(JSON.stringify(value));
@@ -1900,7 +1993,7 @@ async function durableWrite(filePath, value) {
   }
 }
 async function writeOnce(filePath, value) {
-  const tempPath = path5.join(path5.dirname(filePath), `.tmp-${randomUUID()}`);
+  const tempPath = path6.join(path6.dirname(filePath), `.tmp-${randomUUID()}`);
   const file = await open(tempPath, "wx", 384);
   try {
     await file.writeFile(JSON.stringify(value));
@@ -1929,11 +2022,11 @@ function createJournal(home) {
       if (!HEX_HASH.test(event3.eventId)) throw new Error("invalid collector event id");
       const key = sessionKey(event3.agent, event3.nativeSessionId);
       const directory = await ensureDirectory(home, key);
-      await writeOnce(path5.join(directory, "identity.json"), { key });
-      await writeOnce(path5.join(directory, "outbox", `${event3.eventId}.json`), event3);
+      await writeOnce(path6.join(directory, "identity.json"), { key });
+      await writeOnce(path6.join(directory, "outbox", `${event3.eventId}.json`), event3);
     },
     async pending(key) {
-      const outbox = path5.join(collectorDirectory(home, key), "outbox");
+      const outbox = path6.join(collectorDirectory(home, key), "outbox");
       let names;
       try {
         names = await readdir2(outbox);
@@ -1944,7 +2037,7 @@ function createJournal(home) {
       const events = [];
       for (const name of names.filter((name2) => HEX_HASH.test(name2.slice(0, -5)) && name2.endsWith(".json")).sort()) {
         try {
-          events.push(JSON.parse(await readFile3(path5.join(outbox, name), "utf8")));
+          events.push(JSON.parse(await readFile3(path6.join(outbox, name), "utf8")));
         } catch (error) {
           console.warn(`[timeline] unreadable outbox event ${name}: ${String(error)}`);
         }
@@ -1952,7 +2045,7 @@ function createJournal(home) {
       return events;
     },
     async load(key) {
-      const statePath = path5.join(collectorDirectory(home, key), "state.json");
+      const statePath = path6.join(collectorDirectory(home, key), "state.json");
       try {
         const state = JSON.parse(await readFile3(statePath, "utf8"));
         if (state.version !== 1 || state.agent !== "cursor" && state.agent !== "grok" || typeof state.nativeSessionId !== "string" || !state.events || typeof state.events !== "object" || sessionKey(state.agent, state.nativeSessionId) !== key) {
@@ -1961,9 +2054,9 @@ function createJournal(home) {
         return state;
       } catch (error) {
         if (error.code === "ENOENT") {
-          const names = await readdir2(path5.dirname(statePath)).catch(() => []);
+          const names = await readdir2(path6.dirname(statePath)).catch(() => []);
           const corrupt = names.find((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
-          if (corrupt) throw new CorruptCollectorStateError(path5.join(path5.dirname(statePath), corrupt));
+          if (corrupt) throw new CorruptCollectorStateError(path6.join(path6.dirname(statePath), corrupt));
           return null;
         }
         const corruptPath = `${statePath}.${Date.now()}-${randomUUID()}.corrupt`;
@@ -1973,18 +2066,18 @@ function createJournal(home) {
     },
     async save(key, state) {
       const directory = await ensureDirectory(home, key);
-      await durableWrite(path5.join(directory, "state.json"), state);
+      await durableWrite(path6.join(directory, "state.json"), state);
     },
     async ack(key, eventIds) {
-      const outbox = path5.join(collectorDirectory(home, key), "outbox");
+      const outbox = path6.join(collectorDirectory(home, key), "outbox");
       await Promise.all(eventIds.filter((id) => HEX_HASH.test(id)).map(async (id) => {
-        await unlink(path5.join(outbox, `${id}.json`)).catch((error) => {
+        await unlink(path6.join(outbox, `${id}.json`)).catch((error) => {
           if (error.code !== "ENOENT") throw error;
         });
       }));
     },
     async keys() {
-      const root = path5.join(home, "collectors");
+      const root = path6.join(home, "collectors");
       let directories;
       try {
         directories = await readdir2(root);
@@ -1994,9 +2087,9 @@ function createJournal(home) {
       }
       const keys = [];
       for (const directory of directories) {
-        const base = path5.join(root, directory);
+        const base = path6.join(root, directory);
         try {
-          const identity = JSON.parse(await readFile3(path5.join(base, "identity.json"), "utf8"));
+          const identity = JSON.parse(await readFile3(path6.join(base, "identity.json"), "utf8"));
           if (typeof identity.key !== "string") continue;
           if ((await this.pending(identity.key)).length > 0) keys.push(identity.key);
         } catch (error) {
@@ -2011,10 +2104,10 @@ function createJournal(home) {
 // src/shared/collectors/lock.ts
 import { createHash as createHash4, randomUUID as randomUUID2 } from "crypto";
 import { mkdir as mkdir2, open as open2, readFile as readFile4, unlink as unlink2 } from "fs/promises";
-import path6 from "path";
+import path7 from "path";
 import { setTimeout as delay } from "timers/promises";
 function lockPath(home, key) {
-  return path6.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
+  return path7.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
 }
 async function readLock(filePath) {
   try {
@@ -2032,63 +2125,70 @@ function isDead(pid) {
     return error.code === "ESRCH";
   }
 }
-async function reclaimDeadLock(filePath, existing) {
-  const reclaimPath = `${filePath}.reclaim`;
-  let claim;
-  try {
-    claim = await open2(reclaimPath, "wx", 384);
-    await claim.writeFile(JSON.stringify({ pid: process.pid, token: randomUUID2() }));
-    await claim.sync();
-  } catch (error) {
-    await claim?.close().catch(() => void 0);
-    if (error.code === "EEXIST") return false;
-    throw error;
-  }
-  await claim.close();
-  try {
-    const current = await readLock(filePath);
-    if (current?.token !== existing.token || !isDead(current.pid)) return false;
+async function releaseLock(filePath, token) {
+  const current = await readLock(filePath);
+  if (current?.token === token && current.pid === process.pid) {
     await unlink2(filePath).catch((error) => {
       if (error.code !== "ENOENT") throw error;
     });
-    return true;
-  } finally {
-    await unlink2(reclaimPath).catch(() => void 0);
   }
 }
-async function withSessionLock(home, key, action) {
-  const filePath = lockPath(home, key);
-  await mkdir2(path6.dirname(filePath), { recursive: true, mode: 448 });
+async function acquireLock(filePath, deadline, depth = 0) {
+  if (depth > 16) return null;
   const token = randomUUID2();
-  const deadline = Date.now() + 300;
   while (true) {
+    let file;
     try {
-      const file = await open2(filePath, "wx", 384);
+      file = await open2(filePath, "wx", 384);
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+    }
+    if (file) {
       try {
         await file.writeFile(JSON.stringify({ pid: process.pid, token }));
         await file.sync();
       } finally {
         await file.close();
       }
-      try {
-        return { acquired: true, value: await action() };
-      } finally {
-        const current = await readLock(filePath);
-        if (current?.token === token) await unlink2(filePath).catch(() => void 0);
-      }
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
-      const existing = await readLock(filePath);
-      if (!existing) {
-        console.warn(`[timeline] preserving malformed session lock ${filePath}`);
-        return { acquired: false };
-      }
-      if (isDead(existing.pid)) {
-        if (await reclaimDeadLock(filePath, existing)) continue;
-      }
-      if (Date.now() >= deadline) return { acquired: false };
-      await delay(20);
+      const current = await readLock(filePath);
+      return current?.token === token && current.pid === process.pid ? token : null;
     }
+    const existing = await readLock(filePath);
+    if (!existing) {
+      console.warn(`[timeline] preserving malformed session lock ${filePath}`);
+      return null;
+    }
+    if (isDead(existing.pid)) {
+      const guardPath = `${filePath}.reclaim`;
+      const guardToken = await acquireLock(guardPath, deadline, depth + 1);
+      if (guardToken) {
+        try {
+          const guard = await readLock(guardPath);
+          const current = await readLock(filePath);
+          if (guard?.token === guardToken && guard.pid === process.pid && current?.token === existing.token && current.pid === existing.pid && isDead(current.pid)) {
+            await unlink2(filePath).catch((error) => {
+              if (error.code !== "ENOENT") throw error;
+            });
+          }
+        } finally {
+          await releaseLock(guardPath, guardToken);
+        }
+        continue;
+      }
+    }
+    if (Date.now() >= deadline) return null;
+    await delay(20);
+  }
+}
+async function withSessionLock(home, key, action) {
+  const filePath = lockPath(home, key);
+  await mkdir2(path7.dirname(filePath), { recursive: true, mode: 448 });
+  const token = await acquireLock(filePath, Date.now() + 300);
+  if (!token) return { acquired: false };
+  try {
+    return { acquired: true, value: await action() };
+  } finally {
+    await releaseLock(filePath, token);
   }
 }
 
@@ -2430,10 +2530,10 @@ async function readJsonStdin(mode) {
   }
 }
 function collectorHome() {
-  return process.env.OHMYC_HOME ?? path7.join(os3.homedir(), ".config", "ohmyc");
+  return process.env.OHMYC_HOME ?? path8.join(os3.homedir(), ".config", "ohmyc");
 }
 function grokHome() {
-  return process.env.GROK_HOME ?? path7.join(os3.homedir(), ".grok");
+  return process.env.GROK_HOME ?? path8.join(os3.homedir(), ".grok");
 }
 function hydrate(events) {
   const agent = events[0]?.agent;

@@ -1,3 +1,4 @@
+import { cursorReadSkill } from './skill'
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { eventKey } from '../../shared/collectors/identity'
@@ -35,7 +36,7 @@ type TranscriptTurn = {
   prompt: string
   ordinal: number
   hasAssistantActivity: boolean
-  tools: { id: string, name: string }[]
+  tools: { id: string, name: string, skill?: string }[]
 }
 
 type Transcript = {
@@ -83,11 +84,24 @@ async function readTranscript(transcriptPath: string): Promise<Transcript | null
 
   const occurrences = new Map<string, number>()
   const turns: TranscriptTurn[] = []
+  const pendingTools = new Map<string, { tool: TranscriptTurn['tools'][number], input: unknown }>()
   let current: TranscriptTurn | undefined
   for (const row of parsed) {
     const role = typeof row.role === 'string' ? row.role : undefined
     const message = object(row.message)
     const content = contentText(message?.content)
+    const blocks = Array.isArray(message?.content) ? message.content : []
+    for (const block of blocks) {
+      const result = object(block)
+      if (result?.type !== 'tool_result' || typeof result.tool_use_id !== 'string') continue
+      const pending = pendingTools.get(result.tool_use_id)
+      if (!pending) continue
+      const skill = cursorReadSkill(pending.tool.name, pending.input, result.content,
+        result.is_error !== true && result.isError !== true)
+      if (skill) pending.tool.skill = skill
+      pendingTools.delete(result.tool_use_id)
+    }
+    if (role === 'user' && blocks.some(block => object(block)?.type === 'tool_result')) continue
     if (role === 'user') {
       const prompt = nativeUserQuery(content)
       if (!prompt) {
@@ -99,14 +113,15 @@ async function readTranscript(transcriptPath: string): Promise<Transcript | null
       current = { prompt, ordinal, hasAssistantActivity: false, tools: [] }
       turns.push(current)
     } else if (role === 'assistant' && current) {
-      const blocks = Array.isArray(message?.content) ? message.content : []
       const hasTool = blocks.some(block => object(block)?.type === 'tool_use')
       if (content.trim() || hasTool) current.hasAssistantActivity = true
       for (const block of blocks) {
         const tool = object(block)
         if (tool?.type === 'tool_use' && typeof tool.id === 'string' && tool.id.trim()
           && typeof tool.name === 'string' && tool.name.trim()) {
-          current.tools.push({ id: tool.id, name: tool.name })
+          const collected = { id: tool.id, name: tool.name }
+          current.tools.push(collected)
+          pendingTools.set(tool.id, { tool: collected, input: tool.input })
         }
       }
     }

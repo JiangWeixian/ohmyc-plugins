@@ -5,50 +5,7 @@ import os from "os";
 import path from "path";
 import { Database } from "bun:sqlite";
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-TD6MF4ZL.js
-function createWriter(db) {
-  const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
-  const upsertSession = db.prepare(`
-    INSERT OR REPLACE INTO sessions (
-      session_id, project, agent_name, started_at, ended_at, duration_ms,
-      turns, tokens_input, tokens_output, tokens_cached,
-      summary, summary_source, transcript_path, last_offset, ingested_at, model,
-      token_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const deleteTools = db.prepare("DELETE FROM session_tools WHERE session_id = ?");
-  const insertTool = db.prepare("INSERT OR REPLACE INTO session_tools (session_id, tool_name, call_count) VALUES (?, ?, ?)");
-  const deleteSkills = db.prepare("DELETE FROM session_skills WHERE session_id = ?");
-  const insertSkill = db.prepare("INSERT OR REPLACE INTO session_skills (session_id, skill_name) VALUES (?, ?)");
-  return {
-    writeSession(data) {
-      const existingRow = checkExisting.get(data.sessionId);
-      const sessionsInserted = existingRow ? 0 : 1;
-      const sessionsUpdated = existingRow ? 1 : 0;
-      const ingestedAt = Date.now();
-      const transaction = db.transaction(() => {
-        upsertSession.run(data.sessionId, data.project, data.agentName, data.startedAt, data.endedAt, data.durationMs, data.turns, data.tokensInput, data.tokensOutput, data.tokensCached, data.summary, data.summarySource, data.transcriptPath, data.fileSize, ingestedAt, data.model, data.tokenStatus ?? "legacy");
-        deleteTools.run(data.sessionId);
-        for (const tool of data.tools) {
-          insertTool.run(data.sessionId, tool.toolName, tool.callCount);
-        }
-        deleteSkills.run(data.sessionId);
-        for (const skillName of data.skills) {
-          insertSkill.run(data.sessionId, skillName);
-        }
-      });
-      transaction();
-      return {
-        sessionId: data.sessionId,
-        project: data.project,
-        sessionsInserted,
-        sessionsUpdated
-      };
-    }
-  };
-}
-
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
 var CURRENT_SCHEMA_VERSION = 4;
 var SCHEMA_SQL = `
 CREATE TABLE sessions (
@@ -93,6 +50,74 @@ CREATE TABLE meta (
   value  TEXT NOT NULL
 );
 `;
+var MIGRATIONS = {
+  1: "",
+  2: "ALTER TABLE sessions ADD COLUMN model TEXT;",
+  3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;",
+  4: `ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy'
+    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'));`
+};
+
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4XPHLPVI.js
+function ensureTokenStatus(db) {
+  const hasColumn = () => db.prepare("PRAGMA table_info(sessions)").all().some((column) => column.name === "token_status");
+  if (hasColumn()) {
+    return;
+  }
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    if (!hasColumn()) {
+      db.exec(MIGRATIONS[4]);
+    }
+    db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version' AND value = '3'").run();
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+function createWriter(db) {
+  ensureTokenStatus(db);
+  const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
+  const upsertSession = db.prepare(`
+    INSERT OR REPLACE INTO sessions (
+      session_id, project, agent_name, started_at, ended_at, duration_ms,
+      turns, tokens_input, tokens_output, tokens_cached,
+      summary, summary_source, transcript_path, last_offset, ingested_at, model,
+      token_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const deleteTools = db.prepare("DELETE FROM session_tools WHERE session_id = ?");
+  const insertTool = db.prepare("INSERT OR REPLACE INTO session_tools (session_id, tool_name, call_count) VALUES (?, ?, ?)");
+  const deleteSkills = db.prepare("DELETE FROM session_skills WHERE session_id = ?");
+  const insertSkill = db.prepare("INSERT OR REPLACE INTO session_skills (session_id, skill_name) VALUES (?, ?)");
+  return {
+    writeSession(data) {
+      const existingRow = checkExisting.get(data.sessionId);
+      const sessionsInserted = existingRow ? 0 : 1;
+      const sessionsUpdated = existingRow ? 1 : 0;
+      const ingestedAt = Date.now();
+      const transaction = db.transaction(() => {
+        upsertSession.run(data.sessionId, data.project, data.agentName, data.startedAt, data.endedAt, data.durationMs, data.turns, data.tokensInput, data.tokensOutput, data.tokensCached, data.summary, data.summarySource, data.transcriptPath, data.fileSize, ingestedAt, data.model, data.tokenStatus ?? "legacy");
+        deleteTools.run(data.sessionId);
+        for (const tool of data.tools) {
+          insertTool.run(data.sessionId, tool.toolName, tool.callCount);
+        }
+        deleteSkills.run(data.sessionId);
+        for (const skillName of data.skills) {
+          insertSkill.run(data.sessionId, skillName);
+        }
+      });
+      transaction();
+      return {
+        sessionId: data.sessionId,
+        project: data.project,
+        sessionsInserted,
+        sessionsUpdated
+      };
+    }
+  };
+}
 
 // opencode.ts
 var LOG_FILE = path.join(os.tmpdir(), "timeline-plugin.log");
