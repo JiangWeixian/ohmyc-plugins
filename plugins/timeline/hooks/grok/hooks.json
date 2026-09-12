@@ -1,0 +1,114 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "StopCancelled": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

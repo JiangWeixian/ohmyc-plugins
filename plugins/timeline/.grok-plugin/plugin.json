@@ -1,0 +1,14 @@
+{
+  "name": "timeline",
+  "version": "1.0.7",
+  "description": "Collect local coding sessions for OhMyC Timeline",
+  "author": {
+    "name": "JiangWeixian",
+    "email": "jiangweixian1994@gmail.com"
+  },
+  "homepage": "https://github.com/JiangWeixian/ohmyc-plugins",
+  "repository": "https://github.com/JiangWeixian/ohmyc-plugins",
+  "license": "MIT",
+  "logo": "./assets/logo.png",
+  "hooks": "./hooks/grok/hooks.json"
+}

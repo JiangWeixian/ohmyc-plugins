@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/bun-1.3.12-000000?style=flat-square&logo=bun)](.github/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](package.json)
 
-Collects session data from **Claude Code**, **OpenCode**, and **Codex** agents and ingests it into the OhMyC Timeline dashboard.
+Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **Grok Build**, and **OpenCode** and ingests it into the OhMyC Timeline dashboard.
 
 ## Supported Agents
 
@@ -13,14 +13,27 @@ Collects session data from **Claude Code**, **OpenCode**, and **Codex** agents a
 |-------|-------------|-------------|
 | Claude Code | Stop hook via `hooks/hooks.json` and `hooks/ingest-claude.sh` | Claude JSONL transcripts in `~/.claude/projects/` |
 | Codex | Codex plugin manifest, default `hooks/hooks.json`, and `hooks/ingest-codex.sh` | Codex JSONL sessions in `~/.codex/sessions/` and `~/.codex/archived_sessions/` |
+| Cursor CLI | Native Cursor plugin hooks | Hook events plus the transcript path supplied by Cursor when available |
+| Grok Build | Native Grok plugin hooks | Hook events and the matching session files under `$GROK_HOME/sessions/` |
 | OpenCode | OpenCode plugin entry at `opencode.ts` | Real-time OpenCode lifecycle, message, and tool events |
+
+Cursor CLI `2026.09.10-fd3934a` verified local custom-manifest hook loading,
+and Grok Build `1.0.25` validated this plugin's custom hooks manifest. Full
+installed collector acceptance is tracked separately; these are verified
+configuration targets, not claimed minimum versions.
 
 ## Requirements
 
-- Node.js 22 or later for the Claude Code and Codex hook runtime.
+- Node.js 22 or later for the Claude Code, Codex, Cursor, and Grok hook
+  runtimes. If `node` is unavailable, native hooks fail open and cannot record
+  the event.
 - Bun 1.3.x when building from source or running the development test suite.
 - `jq` is optional. Hook scripts use it for a faster transcript parse and fall back to Node when it is unavailable.
-- One supported host: Claude Code, Codex, or OpenCode.
+- One supported host: Claude Code, Codex, Cursor CLI, Grok Build, or OpenCode.
+- An OhMyC App version that understands Timeline token completeness. Cursor
+  currently records token status as unavailable; Grok records complete or
+  partial usage only when its validated session usage file provides it. Older
+  App versions can display unavailable numeric slots as zero.
 
 ## Quick Start
 
@@ -77,6 +90,49 @@ The plugin records session lifecycle, message, and tool events through OpenCode 
 
 Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
 
+### Cursor CLI
+
+Cursor CLI `2026.09.10-fd3934a` can load the plugin directly from a checkout:
+
+```bash
+cursor-agent --plugin-dir "$(pwd)/plugins/timeline" --workspace /path/to/project
+```
+
+You can also add this repository to Cursor's marketplace index:
+
+```bash
+cursor-agent plugin marketplace add https://github.com/JiangWeixian/ohmyc-plugins.git
+```
+
+This Cursor CLI version exposes marketplace management but no CLI plugin
+install command. Install **timeline** from the marketplace in a Cursor client,
+or keep using `--plugin-dir` for local CLI sessions.
+
+Cursor collection begins with events observed after installation. If Cursor
+does not provide `transcript_path`, Timeline still records observable lifecycle
+and tool activity, but it cannot reconstruct transcript-only details or exact
+turn counts that lack stable native IDs. Cursor CLI does not expose a verified
+transcript-disable control in this tested version.
+
+### Grok Build
+
+Add the marketplace, then install and trust the plugin so its hooks can run:
+
+```bash
+grok plugin marketplace add JiangWeixian/ohmyc-plugins
+grok plugin install timeline --trust
+```
+
+For local development, install the plugin directory directly:
+
+```bash
+grok plugin install "$(pwd)/plugins/timeline" --trust
+```
+
+Grok collection begins with events observed after installation. It enriches
+them only from the exact matching local session directory. Missing or partial
+summary, history, or usage files stay queued for a later hook or manual replay.
+
 ## Configuration
 
 | Option | Type | Default | Example | Description |
@@ -84,6 +140,20 @@ Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
 | `OHMYC_HOME` | environment variable | `~/.config/ohmyc` | `/tmp/ohmyc` | Directory containing `timeline.db`. |
 | `AGENT_HOME` | environment variable | `~/.claude` | `/tmp/.claude` | Claude transcript root used by `ingest-claude.sh`. |
 | `CODEX_HOME` | environment variable | `~/.codex` | `/tmp/.codex` | Codex session root used by `ingest-codex.sh`. |
+| `GROK_HOME` | environment variable | `~/.grok` | `/tmp/.grok` | Grok session root used for session enrichment. |
+
+## Recover Pending Events
+
+Hooks durably queue an event before attempting the Timeline database write. If
+the final hook could not acquire the session lock or the database was busy,
+replay queued events from the repository checkout:
+
+```bash
+node plugins/timeline/dist/ingest.mjs --replay-pending
+```
+
+The command uses `OHMYC_HOME` when set. Normal hooks run the bundled file
+directly and do not install dependencies with `npx`.
 
 ## Contributing
 
