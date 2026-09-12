@@ -11,7 +11,6 @@ type StableFile = {
   raw: string
   size: number
   mtimeMs: number
-  parentId?: string
 }
 
 type Summary = {
@@ -24,6 +23,7 @@ type Summary = {
   directory: string
   fileSize: number
   mtimeMs: number
+  parentId?: string
 }
 
 function object(value: unknown): Payload | null {

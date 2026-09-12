@@ -137,6 +137,43 @@ describe('hydrateGrok', () => {
     })
   })
 
+  it('replaces complete usage with a newer valid partial, then completes on recovery', async () => {
+    const { home, directory } = await sessionHome()
+    await copyFixture('summary.json', path.join(directory, 'summary.json'))
+    const usagePath = path.join(directory, 'usage.json')
+    const event = request()
+    const writeUsage = async (
+      inputTokens: number,
+      cachedReadTokens: number,
+      usageIsIncomplete: boolean,
+      updatedAt: string,
+    ) => writeFile(usagePath, JSON.stringify({
+      sessionId: 'g1', updatedAt,
+      session: { inputTokens, outputTokens: 2, cachedReadTokens, usageIsIncomplete },
+    }))
+
+    await writeUsage(10, 2, false, '2026-09-12T10:30:45Z')
+    const complete = await hydrateGrok([event], home)
+    await writeUsage(7, 3, true, '2026-09-12T10:31:45Z')
+    const partial = await hydrateGrok([event, ...complete], home)
+    const partialSnapshot = toSnapshot(reduceEvents(null, [event, ...complete, ...partial]))
+
+    expect(partialSnapshot).toMatchObject({
+      tokensInput: 4, tokensOutput: 2, tokensCached: 3, tokenStatus: 'partial',
+    })
+    expect(partial.some(item => item.resolvesEventId === event.eventId)).toBe(false)
+
+    await writeUsage(12, 4, false, '2026-09-12T10:32:45Z')
+    const recovered = await hydrateGrok([event, ...complete, ...partial], home)
+    expect(toSnapshot(reduceEvents(null, [event, ...complete, ...partial, ...recovered])))
+      .toMatchObject({
+        tokensInput: 8, tokensOutput: 2, tokensCached: 4, tokenStatus: 'complete',
+      })
+    expect(recovered).toContainEqual(expect.objectContaining({
+      resolvesEventId: event.eventId, needsHydration: false,
+    }))
+  })
+
   it('does not select another or newest session directory', async () => {
     const { home, directory } = await sessionHome('newest')
     await writeFile(path.join(directory, 'summary.json'), JSON.stringify({
