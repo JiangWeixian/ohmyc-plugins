@@ -129,6 +129,9 @@ export async function hydrateCursor(
 ): Promise<readonly CollectorEvent[]> {
   const cursorEvents = events.filter(item => item.agent === 'cursor')
   if (cursorEvents.length === 0) return []
+  if (new Set(cursorEvents.map(item => item.nativeSessionId)).size > 1) {
+    throw new Error('mixed Cursor hydration sessions')
+  }
   const output: CollectorEvent[] = []
   const rootProven = cursorEvents.some(item => item.rootSession === true)
   const reliableHookTurns = cursorEvents.some(item => item.turnId?.startsWith('transcript:') === false)

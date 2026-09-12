@@ -177,6 +177,21 @@ describe('hydrateCursor', () => {
     })
   })
 
+  it('rejects root evidence from another Cursor session before producing facts', async () => {
+    const child = parseCursorHook({
+      conversation_id: 'child-a', generation_id: 'child-a', hook_event_name: 'postToolUse',
+      tool_use_id: 'child-call', tool_name: 'Read', transcript_path: null,
+    }, 1000)[0]
+    const unrelatedRoot = parseCursorHook({
+      conversation_id: 'root-b', generation_id: 'root-b', hook_event_name: 'sessionStart',
+      is_background_agent: false, transcript_path: null,
+    }, 1100)[0]
+
+    await expect(hydrateCursor([child, unrelatedRoot]))
+      .rejects.toThrow('mixed Cursor hydration sessions')
+    expect(toSnapshot(reduceEvents(null, [child]))).toBeNull()
+  })
+
   it('does not promote an unlinked child from valid transcript content alone', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'timeline-cursor-'))
     const transcriptPath = path.join(directory, 'child.jsonl')
