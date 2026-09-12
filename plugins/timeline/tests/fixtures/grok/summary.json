@@ -1,0 +1,24 @@
+{
+  "info": {
+    "id": "g1",
+    "cwd": "/tmp/timeline-fixture"
+  },
+  "agent_id": "ag1.5ac4f78d63634e7d90d0224d6ad3c926",
+  "attempt_id": "at1.163275983b9040eb97500cca786ffe33",
+  "session_summary": "Timeline hook integration test file reads",
+  "created_at": "2026-09-12T10:29:46.022749Z",
+  "updated_at": "2026-09-12T10:30:45.378190Z",
+  "num_messages": 29,
+  "num_chat_messages": 18,
+  "current_model_id": "grok-4.6",
+  "next_trace_turn": 2,
+  "chat_format_version": 1,
+  "session_kind": "headless",
+  "git_root_dir": "/tmp/timeline-fixture/",
+  "request_id": "prompt2",
+  "last_active_at": "2026-09-12T10:30:45.378190Z",
+  "generated_title": "Timeline hook integration test file reads",
+  "agent_name": "grok-build-plan",
+  "sandbox_profile": "off",
+  "reasoning_effort": "high"
+}

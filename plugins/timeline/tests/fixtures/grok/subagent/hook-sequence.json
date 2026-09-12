@@ -1,0 +1,300 @@
+[
+  {
+    "hookEventName": "session_start",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:10.727964+00:00",
+    "permissionMode": "default",
+    "source": "new",
+    "hook_event_name": "SessionStart",
+    "session_id": "parent",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "user_prompt_submit",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:10.755271+00:00",
+    "promptId": "00000000-0000-4000-8000-000000000002",
+    "permissionMode": "default",
+    "prompt": "This is a native subagent hook integration test. Spawn exactly one subagent to read child-fixture.txt in this directory and report its text. Wait for it to finish. Do not edit files or use any other project. Reply with its returned text.",
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "parent",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "post_tool_use",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:17.451855+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permissionMode": "default",
+    "toolName": "spawn_subagent",
+    "toolUseId": "call-00000000-0000-4000-8000-000000000004-0",
+    "toolInput": {
+      "description": "Read child-fixture.txt",
+      "prompt": "Read the file child-fixture.txt in the current working directory (the workspace root). Report back the exact full text contents of that file and nothing else. Do not edit any files. Do not use any other project.",
+      "subagent_type": "general-purpose",
+      "background": true
+    },
+    "toolResult": {
+      "type": "Text",
+      "text": "Subagent started in background.\nsubagent_id: child\ntype: general-purpose\ndescription: Read child-fixture.txt\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"child\"] and a positive timeout_ms.\n\nDo not only poll the child. Continue unfinished parent work now."
+    },
+    "toolInputTruncated": false,
+    "toolResultTruncated": false,
+    "durationMs": 4,
+    "isBackgrounded": false,
+    "hook_event_name": "PostToolUse",
+    "session_id": "parent",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permission_mode": "default",
+    "tool_name": "spawn_subagent",
+    "tool_input": {
+      "description": "Read child-fixture.txt",
+      "prompt": "Read the file child-fixture.txt in the current working directory (the workspace root). Report back the exact full text contents of that file and nothing else. Do not edit any files. Do not use any other project.",
+      "subagent_type": "general-purpose",
+      "background": true
+    },
+    "tool_response": {
+      "type": "Text",
+      "text": "Subagent started in background.\nsubagent_id: child\ntype: general-purpose\ndescription: Read child-fixture.txt\n\nWhen you need its result, use get_command_or_subagent_output with task_ids=[\"child\"] and a positive timeout_ms.\n\nDo not only poll the child. Continue unfinished parent work now."
+    },
+    "tool_use_id": "call-00000000-0000-4000-8000-000000000004-0",
+    "duration_ms": 4
+  },
+  {
+    "hookEventName": "subagent_start",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:17.459018+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permissionMode": "default",
+    "subagentId": "child",
+    "subagentType": "general-purpose",
+    "description": "Read child-fixture.txt",
+    "hook_event_name": "SubagentStart",
+    "session_id": "parent",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "user_prompt_submit",
+    "sessionId": "child",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:18.070758+00:00",
+    "promptId": "00000000-0000-4000-8000-000000000001",
+    "permissionMode": "default",
+    "prompt": "Read the file child-fixture.txt in the current working directory (the workspace root). Report back the exact full text contents of that file and nothing else. Do not edit any files. Do not use any other project.",
+    "subagentType": "general-purpose",
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "child",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "post_tool_use",
+    "sessionId": "child",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:21.303865+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/child/updates.jsonl",
+    "permissionMode": "default",
+    "toolName": "read_file",
+    "toolUseId": "call-00000000-0000-4000-8000-000000000003-0",
+    "toolInput": {
+      "target_file": "/tmp/timeline-fixture/child-fixture.txt"
+    },
+    "toolResult": {
+      "type": "ReadFile",
+      "FileContent": {
+        "content": "1\u2192TIMELINE_CHILD_OK\n",
+        "content_concise": "1\u2192TIMELINE_CHILD_OK\n",
+        "absolute_path": "/tmp/timeline-fixture/child-fixture.txt",
+        "offset": null,
+        "raw_output": "TIMELINE_CHILD_OK\n",
+        "total_lines": 2
+      }
+    },
+    "toolInputTruncated": false,
+    "toolResultTruncated": false,
+    "durationMs": 0,
+    "isBackgrounded": false,
+    "subagentType": "general-purpose",
+    "hook_event_name": "PostToolUse",
+    "session_id": "child",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/child/updates.jsonl",
+    "permission_mode": "default",
+    "tool_name": "read_file",
+    "tool_input": {
+      "target_file": "/tmp/timeline-fixture/child-fixture.txt"
+    },
+    "tool_response": {
+      "type": "ReadFile",
+      "FileContent": {
+        "content": "1\u2192TIMELINE_CHILD_OK\n",
+        "content_concise": "1\u2192TIMELINE_CHILD_OK\n",
+        "absolute_path": "/tmp/timeline-fixture/child-fixture.txt",
+        "offset": null,
+        "raw_output": "TIMELINE_CHILD_OK\n",
+        "total_lines": 2
+      }
+    },
+    "tool_use_id": "call-00000000-0000-4000-8000-000000000003-0",
+    "duration_ms": 0
+  },
+  {
+    "hookEventName": "subagent_stop",
+    "sessionId": "child",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:22.989645+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/child/updates.jsonl",
+    "promptId": "00000000-0000-4000-8000-000000000001",
+    "permissionMode": "default",
+    "phase": "gate",
+    "subagentId": "child",
+    "subagentType": "general-purpose",
+    "stopHookActive": false,
+    "lastAssistantMessage": "TIMELINE_CHILD_OK",
+    "hook_event_name": "SubagentStop",
+    "session_id": "child",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/child/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "session_end",
+    "sessionId": "child",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:23.158169+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/child/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "subagentType": "general-purpose",
+    "hook_event_name": "SessionEnd",
+    "session_id": "child",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/child/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "post_tool_use",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:23.932325+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permissionMode": "default",
+    "toolName": "get_command_or_subagent_output",
+    "toolUseId": "call-00000000-0000-4000-8000-000000000005-1",
+    "toolInput": {
+      "task_ids": [
+        "child"
+      ],
+      "timeout_ms": 120000
+    },
+    "toolResult": {
+      "type": "TaskOutput",
+      "Result": {
+        "task_id": "child",
+        "command": "[subagent:general-purpose] Read child-fixture.txt",
+        "status": "completed",
+        "exit_code": 0,
+        "started": "2026-09-12T10:41:17Z",
+        "ended": "2026-09-12T10:41:23Z",
+        "duration_secs": 5.664,
+        "output": "TIMELINE_CHILD_OK\n\n<subagent_meta>id=child, type=general-purpose, tool_calls=1, turns=1, duration_ms=5664</subagent_meta>\n\n<subagent_result>\nsubagent_id: child\nsubagent_type: general-purpose\nTo continue this subagent's conversation, use resume_from=\"child\".\n</subagent_result>",
+        "output_file": "",
+        "truncated": false,
+        "truncation_hint": "",
+        "raw_output_bytes": 369
+      }
+    },
+    "toolInputTruncated": false,
+    "toolResultTruncated": false,
+    "durationMs": 3606,
+    "isBackgrounded": false,
+    "hook_event_name": "PostToolUse",
+    "session_id": "parent",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permission_mode": "default",
+    "tool_name": "get_command_or_subagent_output",
+    "tool_input": {
+      "task_ids": [
+        "child"
+      ],
+      "timeout_ms": 120000
+    },
+    "tool_response": {
+      "type": "TaskOutput",
+      "Result": {
+        "task_id": "child",
+        "command": "[subagent:general-purpose] Read child-fixture.txt",
+        "status": "completed",
+        "exit_code": 0,
+        "started": "2026-09-12T10:41:17Z",
+        "ended": "2026-09-12T10:41:23Z",
+        "duration_secs": 5.664,
+        "output": "TIMELINE_CHILD_OK\n\n<subagent_meta>id=child, type=general-purpose, tool_calls=1, turns=1, duration_ms=5664</subagent_meta>\n\n<subagent_result>\nsubagent_id: child\nsubagent_type: general-purpose\nTo continue this subagent's conversation, use resume_from=\"child\".\n</subagent_result>",
+        "output_file": "",
+        "truncated": false,
+        "truncation_hint": "",
+        "raw_output_bytes": 369
+      }
+    },
+    "tool_use_id": "call-00000000-0000-4000-8000-000000000005-1",
+    "duration_ms": 3606
+  },
+  {
+    "hookEventName": "stop",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:25.949206+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "promptId": "00000000-0000-4000-8000-000000000002",
+    "permissionMode": "default",
+    "reason": "end_turn",
+    "stopHookActive": false,
+    "lastAssistantMessage": "TIMELINE_CHILD_OK",
+    "backgroundTasks": [],
+    "sessionCrons": [],
+    "hook_event_name": "Stop",
+    "session_id": "parent",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "session_end",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:26.141210+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "hook_event_name": "SessionEnd",
+    "session_id": "parent",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "stop",
+    "sessionId": "parent",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:41:26.214940+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "stopHookActive": false,
+    "hook_event_name": "Stop",
+    "session_id": "parent",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/parent/updates.jsonl",
+    "permission_mode": "default"
+  }
+]

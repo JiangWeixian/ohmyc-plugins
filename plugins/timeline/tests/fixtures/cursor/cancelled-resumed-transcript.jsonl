@@ -1,0 +1,5 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Saturday, Sep 12, 2026, 7:01 PM (UTC+8)</timestamp>\n<user_query>\nRead capture.mjs once, then explain every line in detail. Do not modify files or run shell commands.\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "I'll read `capture.mjs` once and walk through every line. No file changes or shell commands."}, {"type": "tool_use", "name": "Read", "input": {"path": "/tmp/timeline-fixture/capture.mjs"}}]}}
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Saturday, Sep 12, 2026, 7:02 PM (UTC+8)</timestamp>\n<user_query>\nReply CANCEL_RESUMED only. Do not call tools.\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "CANCEL_RESUMED"}]}}
+{"type": "turn_ended", "status": "success"}

@@ -1,0 +1,6 @@
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Saturday, Sep 12, 2026, 6:30 PM (UTC+8)</timestamp>\n<user_query>\nReply with exactly TIMELINE_CAPTURE_OK. Do not use tools or read files.\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "TIMELINE_CAPTURE_OK"}]}}
+{"role": "user", "message": {"content": [{"type": "text", "text": "<timestamp>Saturday, Sep 12, 2026, 6:31 PM (UTC+8)</timestamp>\n<user_query>\nThis is a Timeline hook integration test. Read capture.mjs in this directory, then read the nonexistent file definitely-missing-timeline-fixture.txt. Do not create or modify files. Reply TIMELINE_TOOLS_OK after both attempts.\n</user_query>"}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "I'll read `capture.mjs` and then the missing fixture file, without creating or changing anything."}, {"type": "tool_use", "name": "Read", "input": {"path": "/tmp/timeline-fixture/capture.mjs"}}, {"type": "tool_use", "name": "Read", "input": {"path": "/tmp/timeline-fixture/definitely-missing-timeline-fixture.txt"}}]}}
+{"role": "assistant", "message": {"content": [{"type": "text", "text": "TIMELINE_TOOLS_OK"}]}}
+{"type": "turn_ended", "status": "success"}

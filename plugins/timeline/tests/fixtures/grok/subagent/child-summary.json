@@ -1,0 +1,23 @@
+{
+  "info": {
+    "id": "child",
+    "cwd": "/tmp/timeline-fixture"
+  },
+  "agent_id": "child",
+  "attempt_id": "at1.9caec7aa387f4e098fe8a0cdcb63e6ba",
+  "session_summary": "Read child-fixture.txt file contents",
+  "created_at": "2026-09-12T10:41:17.469361Z",
+  "updated_at": "2026-09-12T10:41:23.486835Z",
+  "num_messages": 13,
+  "num_chat_messages": 9,
+  "current_model_id": "grok-4.6",
+  "next_trace_turn": 1,
+  "chat_format_version": 1,
+  "session_kind": "subagent",
+  "git_root_dir": "/tmp/timeline-fixture/",
+  "last_active_at": "2026-09-12T10:41:23.224983Z",
+  "generated_title": "Read child-fixture.txt file contents",
+  "agent_name": "general-purpose",
+  "sandbox_profile": "off",
+  "reasoning_effort": "high"
+}

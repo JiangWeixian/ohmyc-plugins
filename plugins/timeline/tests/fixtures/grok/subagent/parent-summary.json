@@ -1,0 +1,24 @@
+{
+  "info": {
+    "id": "parent",
+    "cwd": "/tmp/timeline-fixture"
+  },
+  "agent_id": "ag1.e63c495dbe5c4843abca63243542d0ff",
+  "attempt_id": "at1.27db1555e04b4d2baaedefb48e8699d4",
+  "session_summary": "Native subagent hook integration test",
+  "created_at": "2026-09-12T10:41:09.972295Z",
+  "updated_at": "2026-09-12T10:41:26.291737Z",
+  "num_messages": 23,
+  "num_chat_messages": 14,
+  "current_model_id": "grok-4.6",
+  "next_trace_turn": 1,
+  "chat_format_version": 1,
+  "session_kind": "headless",
+  "git_root_dir": "/tmp/timeline-fixture/",
+  "request_id": "00000000-0000-4000-8000-000000000002",
+  "last_active_at": "2026-09-12T10:41:26.291737Z",
+  "generated_title": "Native subagent hook integration test",
+  "agent_name": "grok-build-plan",
+  "sandbox_profile": "off",
+  "reasoning_effort": "high"
+}

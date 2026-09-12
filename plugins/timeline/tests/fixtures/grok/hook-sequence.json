@@ -1,0 +1,238 @@
+[
+  {
+    "hookEventName": "session_start",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:29:47.403785+00:00",
+    "permissionMode": "default",
+    "source": "new",
+    "hook_event_name": "SessionStart",
+    "session_id": "g1",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "user_prompt_submit",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:29:47.444114+00:00",
+    "promptId": "prompt1",
+    "permissionMode": "default",
+    "prompt": "Reply with exactly TIMELINE_CAPTURE_OK. Do not use tools or read files.",
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "g1",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "stop",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:29:52.662123+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "promptId": "prompt1",
+    "permissionMode": "default",
+    "reason": "end_turn",
+    "stopHookActive": false,
+    "lastAssistantMessage": "TIMELINE_CAPTURE_OK",
+    "backgroundTasks": [],
+    "sessionCrons": [],
+    "hook_event_name": "Stop",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "session_end",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:29:52.861798+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "hook_event_name": "SessionEnd",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "stop",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:29:52.949405+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "stopHookActive": false,
+    "hook_event_name": "Stop",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "session_start",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:36.276749+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "source": "load",
+    "hook_event_name": "SessionStart",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "user_prompt_submit",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:36.571139+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "promptId": "prompt2",
+    "permissionMode": "default",
+    "prompt": "This is a Timeline hook integration test. Use a read file tool to read capture.mjs in this directory, then use a read file tool to read the nonexistent file definitely-missing-timeline-fixture.txt. Do not create or modify files. Reply TIMELINE_TOOLS_OK after both attempts.",
+    "hook_event_name": "UserPromptSubmit",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "post_tool_use",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:42.615393+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "toolName": "read_file",
+    "toolUseId": "call1",
+    "toolInput": {
+      "target_file": "definitely-missing-timeline-fixture.txt"
+    },
+    "toolResult": {
+      "type": "ReadFile",
+      "FileNotFound": "Error: /tmp/timeline-fixture/definitely-missing-timeline-fixture.txt does not exist.\nNote: your current working directory is /tmp/timeline-fixture"
+    },
+    "toolInputTruncated": false,
+    "toolResultTruncated": false,
+    "durationMs": 0,
+    "isBackgrounded": false,
+    "hook_event_name": "PostToolUse",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default",
+    "tool_name": "read_file",
+    "tool_input": {
+      "target_file": "definitely-missing-timeline-fixture.txt"
+    },
+    "tool_response": {
+      "type": "ReadFile",
+      "FileNotFound": "Error: /tmp/timeline-fixture/definitely-missing-timeline-fixture.txt does not exist.\nNote: your current working directory is /tmp/timeline-fixture"
+    },
+    "tool_use_id": "call1",
+    "duration_ms": 0
+  },
+  {
+    "hookEventName": "post_tool_use",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:42.743890+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "toolName": "read_file",
+    "toolUseId": "call2",
+    "toolInput": {
+      "target_file": "capture.mjs"
+    },
+    "toolResult": {
+      "type": "ReadFile",
+      "FileContent": {
+        "content": "1\u2192import { writeFileSync } from 'node:fs'\nimport { randomUUID } from 'node:crypto'\nimport path from 'node:path'\nlet raw = ''\nfor await (const chunk of process.stdin) raw += chunk\nwriteFileSync(path.join('/tmp/timeline-fixture/capture', randomUUID() + '.json'), raw, { mode: 0o600 })\n",
+        "content_concise": "1\u2192import { writeFileSync } from 'node:fs'\nimport { randomUUID } from 'node:crypto'\nimport path from 'node:path'\nlet raw = ''\nfor await (const chunk of process.stdin) raw += chunk\nwriteFileSync(path.join('/tmp/timeline-fixture/capture', randomUUID() + '.json'), raw, { mode: 0o600 })\n",
+        "absolute_path": "/tmp/timeline-fixture/capture.mjs",
+        "offset": null,
+        "raw_output": "import { writeFileSync } from 'node:fs'\nimport { randomUUID } from 'node:crypto'\nimport path from 'node:path'\nlet raw = ''\nfor await (const chunk of process.stdin) raw += chunk\nwriteFileSync(path.join('/tmp/timeline-fixture/capture', randomUUID() + '.json'), raw, { mode: 0o600 })\n",
+        "total_lines": 7
+      }
+    },
+    "toolInputTruncated": false,
+    "toolResultTruncated": false,
+    "durationMs": 12,
+    "isBackgrounded": false,
+    "hook_event_name": "PostToolUse",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default",
+    "tool_name": "read_file",
+    "tool_input": {
+      "target_file": "capture.mjs"
+    },
+    "tool_response": {
+      "type": "ReadFile",
+      "FileContent": {
+        "content": "1\u2192import { writeFileSync } from 'node:fs'\nimport { randomUUID } from 'node:crypto'\nimport path from 'node:path'\nlet raw = ''\nfor await (const chunk of process.stdin) raw += chunk\nwriteFileSync(path.join('/tmp/timeline-fixture/capture', randomUUID() + '.json'), raw, { mode: 0o600 })\n",
+        "content_concise": "1\u2192import { writeFileSync } from 'node:fs'\nimport { randomUUID } from 'node:crypto'\nimport path from 'node:path'\nlet raw = ''\nfor await (const chunk of process.stdin) raw += chunk\nwriteFileSync(path.join('/tmp/timeline-fixture/capture', randomUUID() + '.json'), raw, { mode: 0o600 })\n",
+        "absolute_path": "/tmp/timeline-fixture/capture.mjs",
+        "offset": null,
+        "raw_output": "import { writeFileSync } from 'node:fs'\nimport { randomUUID } from 'node:crypto'\nimport path from 'node:path'\nlet raw = ''\nfor await (const chunk of process.stdin) raw += chunk\nwriteFileSync(path.join('/tmp/timeline-fixture/capture', randomUUID() + '.json'), raw, { mode: 0o600 })\n",
+        "total_lines": 7
+      }
+    },
+    "tool_use_id": "call2",
+    "duration_ms": 12
+  },
+  {
+    "hookEventName": "stop",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:44.969382+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "promptId": "prompt2",
+    "permissionMode": "default",
+    "reason": "end_turn",
+    "stopHookActive": false,
+    "lastAssistantMessage": "TIMELINE_TOOLS_OK",
+    "backgroundTasks": [],
+    "sessionCrons": [],
+    "hook_event_name": "Stop",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "session_end",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:45.187696+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "hook_event_name": "SessionEnd",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  },
+  {
+    "hookEventName": "stop",
+    "sessionId": "g1",
+    "cwd": "/tmp/timeline-fixture",
+    "workspaceRoot": "/tmp/timeline-fixture/",
+    "timestamp": "2026-09-12T10:30:45.282396+00:00",
+    "transcriptPath": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permissionMode": "default",
+    "reason": "shutdown",
+    "stopHookActive": false,
+    "hook_event_name": "Stop",
+    "session_id": "g1",
+    "transcript_path": "/home/fixture/.grok/sessions/%2Ftmp%2Ftimeline-fixture/g1/updates.jsonl",
+    "permission_mode": "default"
+  }
+]
