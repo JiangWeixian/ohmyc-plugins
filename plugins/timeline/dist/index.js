@@ -5,7 +5,7 @@ import os from "os";
 import path from "path";
 import { Database } from "bun:sqlite";
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
 var CURRENT_SCHEMA_VERSION = 4;
 var SCHEMA_SQL = `
 CREATE TABLE sessions (
@@ -58,22 +58,28 @@ var MIGRATIONS = {
     CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'));`
 };
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+final-fixes-30c9f3b+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4XPHLPVI.js
+// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-AQLGXPYT.js
 function ensureTokenStatus(db) {
   const hasColumn = () => db.prepare("PRAGMA table_info(sessions)").all().some((column) => column.name === "token_status");
   if (hasColumn()) {
     return;
   }
-  db.exec("BEGIN IMMEDIATE");
+  const { timeout } = db.prepare("PRAGMA busy_timeout").get();
+  db.exec("PRAGMA busy_timeout = 1000");
   try {
-    if (!hasColumn()) {
-      db.exec(MIGRATIONS[4]);
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      if (!hasColumn()) {
+        db.exec(MIGRATIONS[4]);
+      }
+      db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version' AND value = '3'").run();
+      db.exec("COMMIT");
+    } catch (error) {
+      db.exec("ROLLBACK");
+      throw error;
     }
-    db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version' AND value = '3'").run();
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
+  } finally {
+    db.exec(`PRAGMA busy_timeout = ${timeout}`);
   }
 }
 function createWriter(db) {
