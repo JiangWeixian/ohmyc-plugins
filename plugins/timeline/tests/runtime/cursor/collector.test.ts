@@ -59,7 +59,7 @@ describe('parseCursorHook', () => {
       { id: 'call1', name: 'Read' },
       { id: 'call2', name: 'Read' },
     ])
-    expect(events.filter(event => event.needsHydration)).toHaveLength(2)
+    expect(events.filter(event => event.needsHydration)).toHaveLength(4)
   })
 
   it('keeps a native tool-only child pending without guessing its parent', async () => {
@@ -96,5 +96,19 @@ describe('parseCursorHook', () => {
 
     expect(prompt.prompt).toBe('p'.repeat(140))
     expect(JSON.stringify(response)).not.toContain('secret response')
+  })
+
+  it('keeps full prompt identity when stored summaries share a prefix', () => {
+    const prefix = 'p'.repeat(140)
+    const input = {
+      conversation_id: 'c1', generation_id: 't1', hook_event_name: 'beforeSubmitPrompt',
+    }
+    const first = parseCursorHook({ ...input, prompt: `${prefix} first private suffix` }, 1)[0]
+    const second = parseCursorHook({ ...input, prompt: `${prefix} second private suffix` }, 2)[0]
+
+    expect(first.eventId).not.toBe(second.eventId)
+    expect(first.prompt).toBe(prefix)
+    expect(second.prompt).toBe(prefix)
+    expect(JSON.stringify([first, second])).not.toMatch(/first private suffix|second private suffix/)
   })
 })

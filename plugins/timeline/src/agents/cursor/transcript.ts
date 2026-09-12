@@ -141,8 +141,7 @@ export async function hydrateCursor(
     const transcript = await readTranscript(transcriptPath)
     if (transcript) loaded.set(transcriptPath, transcript)
   }
-  const transcriptProvesRoot = [...loaded.values()].some(transcript => transcript.turns.length > 0)
-  const resolvedRoot = rootProven || transcriptProvesRoot
+  const unresolvedContext = cursorEvents.some(item => item.unresolvedParent) && !rootProven
   const observedAt = Math.min(...cursorEvents.map(item => item.observedAt))
   const exemplar = cursorEvents[0]
   const hookToolIds = new Set(cursorEvents.flatMap(item => item.tool ? [item.tool.id] : []))
@@ -160,6 +159,7 @@ export async function hydrateCursor(
         project: exemplar.project,
         model: exemplar.model,
         transcriptPath: exemplar.transcriptPath,
+        unresolvedParent: unresolvedContext ? true : undefined,
       }
       output.push(event({ ...base, prompt: turn.prompt.slice(0, 140) }, observedAt))
       output.push(event({ ...base, confirmsTurn: true }, observedAt))
@@ -180,24 +180,25 @@ export async function hydrateCursor(
       transcriptPath: exemplar.transcriptPath,
       fileSize: transcript.fileSize,
       usage: { input: 0, output: 0, cached: 0, status: 'unavailable' },
+      unresolvedParent: unresolvedContext ? true : undefined,
     }, observedAt))
   }
 
   for (const request of requests) {
     const transcript = request.transcriptPath ? loaded.get(request.transcriptPath) : undefined
     if (request.transcriptPath && !transcript?.complete) continue
-    if (request.unresolvedParent && !resolvedRoot) continue
+    if (request.unresolvedParent && !rootProven) continue
     output.push(event({
       ...withoutIdentity(request),
       unresolvedParent: false,
-      rootSession: request.rootSession ?? (resolvedRoot ? true : undefined),
+      rootSession: request.rootSession ?? (rootProven ? true : undefined),
       needsHydration: false,
       resolvesEventId: request.eventId,
     }, request.observedAt))
   }
 
   for (const request of cursorEvents.filter(item => item.unresolvedParent && !item.needsHydration)) {
-    if (!resolvedRoot) continue
+    if (!rootProven) continue
     output.push(event({
       ...withoutIdentity(request),
       unresolvedParent: false,

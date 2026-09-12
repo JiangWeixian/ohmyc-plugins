@@ -78,14 +78,18 @@ export function parseCursorHook(input: unknown, observedAt: number): CollectorEv
   if (hook === 'beforeSubmitPrompt') {
     const prompt = text(payload.prompt)
     if (!prompt || !reliableTurnId) return []
-    return [createEvent({ ...base, prompt: prompt.slice(0, 140) }, observedAt, identity)]
+    return [createEvent(
+      { ...base, prompt: prompt.slice(0, 140) },
+      observedAt,
+      { ...identity, fullPrompt: prompt },
+    )]
   }
 
   if (hook === 'postToolUse' || hook === 'postToolUseFailure') {
     const id = text(payload.tool_use_id)
     const name = text(payload.tool_name)
     if (!id || !name) return []
-    const unresolvedParent = reliableTurnId === undefined && rootSession !== true && !transcriptPath
+    const unresolvedParent = reliableTurnId === undefined && rootSession !== true
       ? true
       : undefined
     return [createEvent({
@@ -93,6 +97,7 @@ export function parseCursorHook(input: unknown, observedAt: number): CollectorEv
       confirmsTurn: true,
       tool: { id, name },
       unresolvedParent,
+      needsHydration: unresolvedParent && transcriptPath ? true : undefined,
     }, observedAt, { ...identity, cursorHook: 'tool' })]
   }
 

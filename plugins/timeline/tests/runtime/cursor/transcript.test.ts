@@ -37,7 +37,7 @@ describe('hydrateCursor', () => {
       tools: [{ toolName: 'Read', callCount: 2 }], model: 'cursor-grok-4.6-high-fast',
       tokenStatus: 'unavailable',
     })
-    expect(hydrated.filter(event => event.resolvesEventId)).toHaveLength(2)
+    expect(hydrated.filter(event => event.resolvesEventId)).toHaveLength(4)
     expect(hydrated.filter(event => event.resolvesEventId)
       .every(event => event.needsHydration === false)).toBe(true)
   })
@@ -174,6 +174,37 @@ describe('hydrateCursor', () => {
 
     expect(completion).toMatchObject({
       tool: child.tool, unresolvedParent: false, resolvesEventId: child.eventId,
+    })
+  })
+
+  it('does not promote an unlinked child from valid transcript content alone', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'timeline-cursor-'))
+    const transcriptPath = path.join(directory, 'child.jsonl')
+    await writeFile(transcriptPath, [
+      JSON.stringify({ role: 'user', message: { content: '<user_query>child query</user_query>' } }),
+      JSON.stringify({ role: 'assistant', message: { content: 'child response' } }),
+    ].join('\n') + '\n')
+    const child = parseCursorHook({
+      conversation_id: 'child', generation_id: 'child', hook_event_name: 'postToolUse',
+      tool_use_id: 'child-call', tool_name: 'Read', transcript_path: transcriptPath,
+    }, 1000)[0]
+
+    const pending = await hydrateCursor([child])
+    expect(child).toMatchObject({ unresolvedParent: true, needsHydration: true })
+    expect(pending.some(item => item.resolvesEventId === child.eventId)).toBe(false)
+    expect(pending.every(item => item.unresolvedParent === true)).toBe(true)
+    expect(toSnapshot(reduceEvents(null, [child, ...pending]))).toBeNull()
+
+    const rootEvidence = parseCursorHook({
+      conversation_id: 'child', generation_id: 'child', hook_event_name: 'sessionStart',
+      is_background_agent: false, transcript_path: null,
+    }, 1100)[0]
+    const resolved = await hydrateCursor([child, rootEvidence])
+    expect(resolved).toContainEqual(expect.objectContaining({
+      resolvesEventId: child.eventId, unresolvedParent: false, needsHydration: false,
+    }))
+    expect(toSnapshot(reduceEvents(null, [rootEvidence, ...resolved]))).toMatchObject({
+      turns: 1, tools: [{ toolName: 'Read', callCount: 1 }],
     })
   })
 
