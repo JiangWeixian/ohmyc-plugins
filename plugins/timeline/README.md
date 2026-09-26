@@ -18,9 +18,11 @@ Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **G
 | OpenCode | OpenCode plugin entry at `opencode.ts` | Real-time OpenCode lifecycle, message, and tool events |
 
 Cursor CLI `2026.09.10-fd3934a` verified local custom-manifest hook loading,
-and Grok Build `1.0.25` validated this plugin's custom hooks manifest. Full
-installed collector acceptance is tracked separately; these are verified
-configuration targets, not claimed minimum versions.
+and Grok Build `1.0.25` / `1.0.30` were tested with an additional native hook
+registration. Plugin installation alone did not activate Grok hooks in these
+builds. Grok installation support remains incomplete; see the
+[verification report](../../docs/verification/cursor-grok-timeline.md). These
+are tested versions, not claimed minimum versions.
 
 ## Requirements
 
@@ -30,10 +32,10 @@ configuration targets, not claimed minimum versions.
 - Bun 1.3.x when building from source or running the development test suite.
 - `jq` is optional. Hook scripts use it for a faster transcript parse and fall back to Node when it is unavailable.
 - One supported host: Claude Code, Codex, Cursor CLI, Grok Build, or OpenCode.
-- An OhMyC App version that understands Timeline token completeness. Cursor
-  currently records token status as unavailable; Grok records complete or
-  partial usage only when its validated session usage file provides it. Older
-  App versions can display unavailable numeric slots as zero.
+- Cursor records token status as unavailable; Grok records complete or partial
+  usage only when its validated session usage file provides it. This integration
+  preserves the existing OhMyC UI; numeric displays may show zero for unavailable
+  usage. The stored token status distinguishes it from measured zero.
 
 ## Quick Start
 
@@ -116,7 +118,10 @@ transcript-disable control in this tested version.
 
 ### Grok Build
 
-Add the marketplace, then install and trust the plugin so its hooks can run:
+The following commands install and trust the plugin. On the tested Grok
+Build 1.0.25 and 1.0.30 versions, this alone does not activate its hooks. A
+one-time native hook registration worked in isolated tests, but its setup
+workflow is not yet included; this integration is not ready for release.
 
 ```bash
 grok plugin marketplace add JiangWeixian/ohmyc-plugins
