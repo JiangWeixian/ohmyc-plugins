@@ -89,6 +89,27 @@ describe('native skill read evidence', () => {
       .toMatchObject({ sessionId: 'grok:parent', skills: ['inspect'], turns: 0, tools: [{ toolName: 'read_file', callCount: 1 }] })
   })
 
+  it('Cursor accepts the transcript Read path field', async () => {
+    const root = await home()
+    const transcript = path.join(root, 'transcript.jsonl')
+    await writeFile(transcript, [
+      { role: 'user', message: { content: '<user_query>inspect</user_query>' } },
+      { role: 'assistant', message: { content: [
+        { type: 'tool_use', id: 'ok', name: 'Read', input: { path: skillPath } },
+      ] } },
+      { role: 'user', message: { content: [
+        { type: 'tool_result', tool_use_id: 'ok', content: cursor.tool_output },
+      ] } },
+    ].map(row => JSON.stringify(row)).join('\n') + '\n')
+    const events = parseCursorHook({
+      conversation_id: 'c1', hook_event_name: 'sessionEnd', is_background_agent: false,
+      transcript_path: transcript,
+    }, 1)
+    const hydrated = await hydrateCursor(events)
+    expect(toSnapshot(reduceEvents(null, [...events, ...hydrated])))
+      .toMatchObject({ skills: ['inspect'], tools: [{ toolName: 'Read', callCount: 1 }] })
+  })
+
   it('Cursor hydration counts only matched successful read results', async () => {
     const root = await home()
     const transcript = path.join(root, 'transcript.jsonl')

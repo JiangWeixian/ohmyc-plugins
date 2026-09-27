@@ -14,7 +14,7 @@ it('initializes concurrent actual Bun bundles against an existing v3 database', 
     execFileSync('bun', [worker, 'init'], options)
     const outputs = await Promise.all(Array.from({ length: 3 }, () => promisify(execFile)('bun', [worker], options)))
     for (const { stdout } of outputs) {
-      expect(JSON.parse(stdout)).toMatchObject({ hooks: ['event'], version: '4', legacy: 'legacy', tools: 1, skills: 1 })
+      expect(JSON.parse(stdout)).toMatchObject({ hooks: ['event'], version: '5', legacy: 'legacy', tools: 1, skills: 1 })
     }
     for (let i = 0; i < 2; i++) {
       const db = openDatabase({ dbPath: path.join(home, 'timeline.db') })
@@ -34,7 +34,7 @@ it('waits through a proven transient writer lock when the actual Bun bundle upgr
     const options = { env: { ...process.env, OHMYC_HOME: home }, encoding: 'utf8' as const, timeout: 5000 }
     execFileSync('bun', [worker, 'init'], options)
     const result = JSON.parse(execFileSync('bun', [worker, 'contended'], options))
-    expect(result).toMatchObject({ hooks: ['event'], version: '4', legacy: 'legacy', tools: 1, skills: 1 })
+    expect(result).toMatchObject({ hooks: ['event'], version: '5', legacy: 'legacy', tools: 1, skills: 1 })
     expect(result.elapsed).toBeGreaterThanOrEqual(100)
     expect(result.elapsed).toBeLessThan(3000)
     const db = openDatabase({ dbPath: path.join(home, 'timeline.db') })

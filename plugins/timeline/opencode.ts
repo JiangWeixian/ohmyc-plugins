@@ -8,7 +8,7 @@ import path from 'node:path'
 import { Database } from 'bun:sqlite'
 
 import { createWriter } from '@ohmyc/timeline'
-import { CURRENT_SCHEMA_VERSION, SCHEMA_SQL } from '@ohmyc/timeline'
+import { migrate } from '@ohmyc/timeline/migrate'
 
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
 import type { ParsedSessionData } from '@ohmyc/timeline/ingest'
@@ -107,6 +107,7 @@ function ensureDb(): Database {
   const dbPath = getDbPath()
   mkdirSync(path.dirname(dbPath), { recursive: true })
   const db = new Database(dbPath)
+  db.exec('PRAGMA busy_timeout = 5000')
   db.exec('PRAGMA journal_mode = WAL')
   db.exec('PRAGMA foreign_keys = ON')
   ensureSchema(db)
@@ -114,21 +115,11 @@ function ensureDb(): Database {
 }
 
 function ensureSchema(db: Database): void {
-  // Inline migration: if the sessions table already exists, check
-  // whether it has the agent_name column (added in schema v3) and
-  // add it if missing. This avoids a separate migration framework.
-  const hasSessions = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").get()
-  if (hasSessions) {
-    const hasAgentName = db.query('PRAGMA table_info(sessions)').all()
-      .some((col: any) => col.name === 'agent_name')
-    if (!hasAgentName) {
-      db.exec('ALTER TABLE sessions ADD COLUMN agent_name TEXT;')
-    }
-    return
-  }
-
-  db.exec(SCHEMA_SQL)
-  db.query('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)').run('schema_version', String(CURRENT_SCHEMA_VERSION))
+  migrate({
+    exec: sql => db.exec(sql),
+    prepare: sql => db.query(sql),
+    transaction: fn => () => db.transaction(fn).immediate(),
+  })
 }
 
 interface MessageSnapshot {
@@ -136,6 +127,7 @@ interface MessageSnapshot {
   messageId: string
   role: 'user' | 'assistant'
   createdAt: number
+  usageAt: number | null
   model: string | null
   tokens: { input: number; output: number; cached: number }
 }
@@ -271,7 +263,19 @@ function toParsedSessionData(acc: SessionAccumulator): ParsedSessionData {
     }
   }
 
+  const usageEvents = assistantMessages.filter(message => message.usageAt !== null).map(message => ({
+    eventKey: JSON.stringify([message.sessionId, message.messageId]),
+    occurredAt: message.usageAt!,
+    tokensInput: message.tokens.input,
+    tokensOutput: message.tokens.output,
+    tokensCached: message.tokens.cached,
+    model: message.model,
+  }))
   return {
+    usageDetails: {
+      status: usageEvents.length !== assistantMessages.length ? 'partial' : usageEvents.length ? 'complete' : 'unavailable',
+      events: usageEvents,
+    },
     sessionId: acc.sessionId,
     project: acc.project,
     agentName: 'opencode',
@@ -483,6 +487,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
       messageId: String(info.id),
       role: info.role,
       createdAt: Number(info.time?.created ?? Date.now()),
+      usageAt: typeof info.time?.created === 'number' && Number.isSafeInteger(info.time.created)
+        ? info.time.created : null,
       model: info.modelID ? String(info.modelID) : null,
       tokens: {
         input: Number(info.tokens?.input ?? 0),

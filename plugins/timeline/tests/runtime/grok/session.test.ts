@@ -39,6 +39,9 @@ describe('parseGrokUsage', () => {
     }, 'g1')
 
     expect(usage).toEqual({ input: 7, output: 5, cached: 3, status: 'complete' })
+    expect(parseGrokUsage({ sessionId: 'g1', session: {
+      inputTokens: 100, outputTokens: 10, cachedReadTokens: 40, totalTokens: 110,
+    } }, 'g1')).toEqual({ input: 60, output: 10, cached: 40, status: 'complete' })
   })
 
   it('rejects copied, negative, fractional, and cache-heavy usage', () => {
@@ -312,6 +315,21 @@ describe('hydrateGrok', () => {
     expect(await hydrateGrok([childTool], home)).toEqual([])
   })
 
+  it('records summary identity while usage.json is still absent', async () => {
+    const { home, directory } = await sessionHome()
+    await copyFixture('summary.json', path.join(directory, 'summary.json'))
+    const event = request()
+    const hydrated = await hydrateGrok([event], home)
+
+    expect(hydrated.some(item => item.resolvesEventId === event.eventId)).toBe(false)
+    expect(toSnapshot(reduceEvents(null, [event, ...hydrated]))).toMatchObject({
+      model: 'grok-4.6',
+      summary: 'Timeline hook integration test file reads',
+      tokenStatus: 'unavailable',
+      tokensInput: 0,
+    })
+  })
+
   it('links a subagent through an explicit validated summary parent ID', async () => {
     const home = await mkdtemp(path.join(tmpdir(), 'timeline-grok-'))
     const root = path.join(home, 'sessions', 'project')
@@ -334,6 +352,57 @@ describe('hydrateGrok', () => {
     expect(await hydrateGrok([childTool], home)).toContainEqual(expect.objectContaining({
       nativeSessionId: 'parent', sourceSessionId: 'child', resolvesEventId: childTool.eventId,
     }))
+  })
+
+  it('links a child whose summary omits session_kind', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'timeline-grok-'))
+    const root = path.join(home, 'sessions', 'project')
+    const parent = path.join(root, 'parent')
+    const child = path.join(root, 'child')
+    await mkdir(path.join(parent, 'subagents', 'child'), { recursive: true })
+    await mkdir(child, { recursive: true })
+    await writeFile(path.join(parent, 'summary.json'), JSON.stringify({
+      info: { id: 'parent', cwd: '/tmp' }, chat_format_version: 1,
+    }))
+    await writeFile(path.join(child, 'summary.json'), JSON.stringify({
+      info: { id: 'child', cwd: '/tmp' }, chat_format_version: 1,
+    }))
+    await writeFile(path.join(parent, 'subagents', 'child', 'meta.json'), JSON.stringify({
+      parent_session_id: 'parent', child_session_id: 'child', subagent_id: 'child',
+    }))
+    const childTool = parseGrokHook({
+      hookEventName: 'post_tool_use', sessionId: 'child', subagentType: 'general-purpose',
+      toolUseId: 'call', toolName: 'read_file',
+    }, 1000)[0]
+
+    expect(await hydrateGrok([childTool], home)).toContainEqual(expect.objectContaining({
+      nativeSessionId: 'parent', sourceSessionId: 'child', resolvesEventId: childTool.eventId,
+    }))
+  })
+
+  it('does not link an explicit fork even when subagent metadata matches', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'timeline-grok-'))
+    const root = path.join(home, 'sessions', 'project')
+    const parent = path.join(root, 'parent')
+    const child = path.join(root, 'child')
+    await mkdir(path.join(parent, 'subagents', 'child'), { recursive: true })
+    await mkdir(child, { recursive: true })
+    await writeFile(path.join(parent, 'summary.json'), JSON.stringify({
+      info: { id: 'parent', cwd: '/tmp' }, chat_format_version: 1,
+    }))
+    await writeFile(path.join(child, 'summary.json'), JSON.stringify({
+      info: { id: 'child', cwd: '/tmp' }, parent_session_id: 'parent',
+      chat_format_version: 1, session_kind: 'fork',
+    }))
+    await writeFile(path.join(parent, 'subagents', 'child', 'meta.json'), JSON.stringify({
+      parent_session_id: 'parent', child_session_id: 'child', subagent_id: 'child',
+    }))
+    const childTool = parseGrokHook({
+      hookEventName: 'post_tool_use', sessionId: 'child', subagentType: 'general-purpose',
+      toolUseId: 'call', toolName: 'read_file',
+    }, 1000)[0]
+
+    expect(await hydrateGrok([childTool], home)).toEqual([])
   })
 
   it('does not turn compressed or synthetic chat records into root prompts', async () => {

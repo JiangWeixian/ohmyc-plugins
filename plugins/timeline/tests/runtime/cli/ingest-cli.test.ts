@@ -139,12 +139,12 @@ describe('dist/ingest.mjs (node entry)', () => {
       endedAt: 1_714_478_405_000,
       durationMs: 5000,
       turns: 1,
-      tokensInput: 5,
-      tokensOutput: 3,
-      tokensCached: 0,
+      tokensInput: 100,
+      tokensOutput: 50,
+      tokensCached: 9,
       summary: 'hello',
       summarySource: 'first_message',
-      transcriptPath: '/dev/null',
+      transcriptPath,
       fileSize: 0,
       tools: [],
       skills: [],
@@ -162,6 +162,11 @@ describe('dist/ingest.mjs (node entry)', () => {
 
     expect(row?.session_id).toBe('session-bbb')
     expect(row?.project).toBe('demo')
+    expect(readDb(db => db.prepare(
+      'SELECT tokens_input, tokens_output, tokens_cached FROM sessions WHERE session_id = ?',
+    ).get('session-bbb'))).toEqual({ tokens_input: 5, tokens_output: 3, tokens_cached: 0 })
+    expect(run(['--raw'], JSON.stringify(parsed)).status).toBe(0)
+    expect(readDb(db => db.prepare('SELECT COUNT(*) AS n, SUM(tokens_input+tokens_output+tokens_cached) AS total FROM token_usage_events').get())).toEqual({ n: 1, total: 8 })
   })
 
   it('ingests a Cursor hook from stdin', () => {

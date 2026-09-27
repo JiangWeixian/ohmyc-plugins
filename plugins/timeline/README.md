@@ -135,8 +135,9 @@ grok plugin install "$(pwd)/plugins/timeline" --trust
 ```
 
 Grok collection begins with events observed after installation. It enriches
-them only from the exact matching local session directory. Missing or partial
-summary, history, or usage files stay queued for a later hook or manual replay.
+them only from the exact matching local session directory. A stable
+`summary.json` supplies the model and title even when `usage.json` is not
+ready. Missing or partial usage stays queued for a later hook or manual replay.
 
 ## Configuration
 

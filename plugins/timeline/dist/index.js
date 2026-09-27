@@ -5,8 +5,121 @@ import os from "os";
 import path from "path";
 import { Database } from "bun:sqlite";
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
-var CURRENT_SCHEMA_VERSION = 4;
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-3DZYXYFD.js
+function totalSessionTokens(session) {
+  return session.tokens_input + session.tokens_output + (session.agent_name === "codex" ? 0 : session.tokens_cached);
+}
+
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-HH4GFJS4.js
+function storeUsageDetails(db, session, details, ingestedAt) {
+  const insertUsage = db.prepare(`INSERT INTO token_usage_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source, session_id, event_key) DO UPDATE SET
+    occurred_at=excluded.occurred_at, tokens_input=excluded.tokens_input,
+    tokens_output=excluded.tokens_output, tokens_cached=excluded.tokens_cached,
+    model=excluded.model, ingested_at=excluded.ingested_at`);
+  const clearUsage = db.prepare("DELETE FROM token_usage_events WHERE source=? AND session_id=?");
+  const coverage = db.prepare(`INSERT INTO usage_event_coverage VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(source, session_id) DO UPDATE SET status=excluded.status,
+    reconciled_total=excluded.reconciled_total, updated_at=excluded.updated_at`);
+  const source = session.agent_name ?? "unknown";
+  const total = totalSessionTokens(session);
+  const eventTotal = details.events.reduce((sum, e) => sum + e.tokensInput + e.tokensOutput + e.tokensCached, 0);
+  const status = details.status === "complete" && total !== eventTotal ? "partial" : details.status;
+  if (status === "complete") {
+    clearUsage.run(source, session.session_id);
+  }
+  for (const e of details.events) {
+    if (!Number.isSafeInteger(e.occurredAt) || ![e.tokensInput, e.tokensOutput, e.tokensCached].every((n) => Number.isSafeInteger(n) && n >= 0)) {
+      throw new Error("Invalid usage event");
+    }
+    insertUsage.run(source, session.session_id, e.eventKey, e.occurredAt, e.tokensInput, e.tokensOutput, e.tokensCached, e.model, ingestedAt);
+  }
+  coverage.run(source, session.session_id, status, total, ingestedAt);
+}
+function createWriter(db) {
+  const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
+  const upsertSession = db.prepare(`
+    INSERT INTO sessions (
+      session_id, project, agent_name, started_at, ended_at, duration_ms,
+      turns, tokens_input, tokens_output, tokens_cached,
+      summary, summary_source, transcript_path, last_offset, ingested_at, model, token_status
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      project=excluded.project, agent_name=excluded.agent_name,
+      started_at=excluded.started_at, ended_at=excluded.ended_at,
+      duration_ms=excluded.duration_ms, turns=excluded.turns,
+      tokens_input=excluded.tokens_input, tokens_output=excluded.tokens_output,
+      tokens_cached=excluded.tokens_cached, summary=excluded.summary,
+      summary_source=excluded.summary_source, transcript_path=excluded.transcript_path,
+      last_offset=excluded.last_offset, ingested_at=excluded.ingested_at,
+      model=excluded.model, token_status=excluded.token_status
+  `);
+  const deleteTools = db.prepare("DELETE FROM session_tools WHERE session_id = ?");
+  const insertTool = db.prepare("INSERT OR REPLACE INTO session_tools (session_id, tool_name, call_count) VALUES (?, ?, ?)");
+  const deleteSkills = db.prepare("DELETE FROM session_skills WHERE session_id = ?");
+  const insertSkill = db.prepare("INSERT OR REPLACE INTO session_skills (session_id, skill_name) VALUES (?, ?)");
+  return {
+    writeSession(data) {
+      const existingRow = checkExisting.get(data.sessionId);
+      const sessionsInserted = existingRow ? 0 : 1;
+      const sessionsUpdated = existingRow ? 1 : 0;
+      const ingestedAt = Date.now();
+      const transaction = db.transaction(() => {
+        upsertSession.run(data.sessionId, data.project, data.agentName, data.startedAt, data.endedAt, data.durationMs, data.turns, data.tokensInput, data.tokensOutput, data.tokensCached, data.summary, data.summarySource, data.transcriptPath, data.fileSize, ingestedAt, data.model, data.tokenStatus ?? "legacy");
+        if (data.usageDetails) {
+          storeUsageDetails(db, {
+            session_id: data.sessionId,
+            agent_name: data.agentName,
+            tokens_input: data.tokensInput,
+            tokens_output: data.tokensOutput,
+            tokens_cached: data.tokensCached
+          }, data.usageDetails, ingestedAt);
+        }
+        deleteTools.run(data.sessionId);
+        for (const tool of data.tools) {
+          insertTool.run(data.sessionId, tool.toolName, tool.callCount);
+        }
+        deleteSkills.run(data.sessionId);
+        for (const skillName of data.skills) {
+          insertSkill.run(data.sessionId, skillName);
+        }
+      });
+      transaction();
+      return {
+        sessionId: data.sessionId,
+        project: data.project,
+        sessionsInserted,
+        sessionsUpdated
+      };
+    }
+  };
+}
+
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-FSXI6P5L.js
+var CURRENT_SCHEMA_VERSION = 5;
+var USAGE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS token_usage_events (
+  source TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  tokens_input INTEGER NOT NULL CHECK(tokens_input >= 0),
+  tokens_output INTEGER NOT NULL CHECK(tokens_output >= 0),
+  tokens_cached INTEGER NOT NULL CHECK(tokens_cached >= 0),
+  model TEXT,
+  ingested_at INTEGER NOT NULL,
+  PRIMARY KEY(source, session_id, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_time ON token_usage_events(occurred_at);
+CREATE TABLE IF NOT EXISTS usage_event_coverage (
+  source TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('complete','partial','unavailable')),
+  reconciled_total INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(source, session_id)
+);
+`;
 var SCHEMA_SQL = `
 CREATE TABLE sessions (
   session_id        TEXT PRIMARY KEY,
@@ -25,8 +138,7 @@ CREATE TABLE sessions (
   last_offset       INTEGER NOT NULL,
   ingested_at       INTEGER NOT NULL,
   model             TEXT,
-  token_status      TEXT NOT NULL DEFAULT 'legacy'
-                    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'))
+  token_status TEXT NOT NULL DEFAULT 'legacy'
 );
 
 CREATE INDEX idx_sessions_started_at ON sessions(started_at DESC);
@@ -49,80 +161,55 @@ CREATE TABLE meta (
   key    TEXT PRIMARY KEY,
   value  TEXT NOT NULL
 );
+${USAGE_SCHEMA_SQL}
 `;
 var MIGRATIONS = {
   1: "",
   2: "ALTER TABLE sessions ADD COLUMN model TEXT;",
   3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;",
-  4: `ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy'
-    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'));`
+  4: "ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy';",
+  5: USAGE_SCHEMA_SQL
 };
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-AQLGXPYT.js
-function ensureTokenStatus(db) {
-  const hasColumn = () => db.prepare("PRAGMA table_info(sessions)").all().some((column) => column.name === "token_status");
-  if (hasColumn()) {
-    return;
-  }
-  const { timeout } = db.prepare("PRAGMA busy_timeout").get();
-  db.exec("PRAGMA busy_timeout = 1000");
-  try {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      if (!hasColumn()) {
-        db.exec(MIGRATIONS[4]);
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-TYMWVW4H.js
+function migrate(db, options) {
+  const apply = db.transaction(() => {
+    const targetVersion = options?.currentSchemaVersion ?? CURRENT_SCHEMA_VERSION;
+    const migrations = options?.migrations ?? MIGRATIONS;
+    const metaTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'").get();
+    if (!metaTable) {
+      db.exec(SCHEMA_SQL);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(targetVersion));
+      return;
+    }
+    const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    let currentVersion = versionRow ? Number.parseInt(versionRow.value, 10) : 0;
+    if (Number.isNaN(currentVersion)) {
+      currentVersion = 0;
+    }
+    const applyMigrations = () => {
+      while (currentVersion < targetVersion) {
+        const nextVersion = currentVersion + 1;
+        const migrationSql = migrations[nextVersion];
+        if (migrationSql === undefined) {
+          throw new Error(`Missing migration for version ${nextVersion}`);
+        }
+        if (migrationSql) {
+          try {
+            db.exec(migrationSql);
+          } catch (error) {
+            if (!/duplicate column name/i.test(error?.message ?? "")) {
+              throw error;
+            }
+          }
+        }
+        db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(nextVersion));
+        currentVersion = nextVersion;
       }
-      db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version' AND value = '3'").run();
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
-    }
-  } finally {
-    db.exec(`PRAGMA busy_timeout = ${timeout}`);
-  }
-}
-function createWriter(db) {
-  ensureTokenStatus(db);
-  const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
-  const upsertSession = db.prepare(`
-    INSERT OR REPLACE INTO sessions (
-      session_id, project, agent_name, started_at, ended_at, duration_ms,
-      turns, tokens_input, tokens_output, tokens_cached,
-      summary, summary_source, transcript_path, last_offset, ingested_at, model,
-      token_status
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const deleteTools = db.prepare("DELETE FROM session_tools WHERE session_id = ?");
-  const insertTool = db.prepare("INSERT OR REPLACE INTO session_tools (session_id, tool_name, call_count) VALUES (?, ?, ?)");
-  const deleteSkills = db.prepare("DELETE FROM session_skills WHERE session_id = ?");
-  const insertSkill = db.prepare("INSERT OR REPLACE INTO session_skills (session_id, skill_name) VALUES (?, ?)");
-  return {
-    writeSession(data) {
-      const existingRow = checkExisting.get(data.sessionId);
-      const sessionsInserted = existingRow ? 0 : 1;
-      const sessionsUpdated = existingRow ? 1 : 0;
-      const ingestedAt = Date.now();
-      const transaction = db.transaction(() => {
-        upsertSession.run(data.sessionId, data.project, data.agentName, data.startedAt, data.endedAt, data.durationMs, data.turns, data.tokensInput, data.tokensOutput, data.tokensCached, data.summary, data.summarySource, data.transcriptPath, data.fileSize, ingestedAt, data.model, data.tokenStatus ?? "legacy");
-        deleteTools.run(data.sessionId);
-        for (const tool of data.tools) {
-          insertTool.run(data.sessionId, tool.toolName, tool.callCount);
-        }
-        deleteSkills.run(data.sessionId);
-        for (const skillName of data.skills) {
-          insertSkill.run(data.sessionId, skillName);
-        }
-      });
-      transaction();
-      return {
-        sessionId: data.sessionId,
-        project: data.project,
-        sessionsInserted,
-        sessionsUpdated
-      };
-    }
-  };
+    };
+    applyMigrations();
+  });
+  apply();
 }
 
 // opencode.ts
@@ -186,22 +273,18 @@ function ensureDb() {
   const dbPath = getDbPath();
   mkdirSync(path.dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
+  db.exec("PRAGMA busy_timeout = 5000");
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA foreign_keys = ON");
   ensureSchema(db);
   return db;
 }
 function ensureSchema(db) {
-  const hasSessions = db.query("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'").get();
-  if (hasSessions) {
-    const hasAgentName = db.query("PRAGMA table_info(sessions)").all().some((col) => col.name === "agent_name");
-    if (!hasAgentName) {
-      db.exec("ALTER TABLE sessions ADD COLUMN agent_name TEXT;");
-    }
-    return;
-  }
-  db.exec(SCHEMA_SQL);
-  db.query("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)").run("schema_version", String(CURRENT_SCHEMA_VERSION));
+  migrate({
+    exec: (sql) => db.exec(sql),
+    prepare: (sql) => db.query(sql),
+    transaction: (fn) => () => db.transaction(fn).immediate()
+  });
 }
 var defaultTitlePattern = /^(?:New session|Child session) - \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 function isDefaultSessionTitle(title) {
@@ -266,7 +349,19 @@ function toParsedSessionData(acc) {
       skills.add(call.args.name);
     }
   }
+  const usageEvents = assistantMessages.filter((message) => message.usageAt !== null).map((message) => ({
+    eventKey: JSON.stringify([message.sessionId, message.messageId]),
+    occurredAt: message.usageAt,
+    tokensInput: message.tokens.input,
+    tokensOutput: message.tokens.output,
+    tokensCached: message.tokens.cached,
+    model: message.model
+  }));
   return {
+    usageDetails: {
+      status: usageEvents.length !== assistantMessages.length ? "partial" : usageEvents.length ? "complete" : "unavailable",
+      events: usageEvents
+    },
     sessionId: acc.sessionId,
     project: acc.project,
     agentName: "opencode",
@@ -424,10 +519,10 @@ function createEventHandler(deps) {
       messageId: String(info.id),
       role: info.role,
       createdAt: Number(info.time?.created ?? Date.now()),
+      usageAt: typeof info.time?.created === "number" && Number.isSafeInteger(info.time.created) ? info.time.created : null,
       model: info.modelID ? String(info.modelID) : null,
       tokens: {
         input: Number(info.tokens?.input ?? 0),
-        // OpenCode exposes reasoning separately from visible output.
         output: Number(info.tokens?.output ?? 0) + Number(info.tokens?.reasoning ?? 0),
         cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0)
       }

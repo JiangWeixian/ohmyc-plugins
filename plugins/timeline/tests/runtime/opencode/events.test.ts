@@ -391,6 +391,12 @@ describe('createEventHandler', () => {
     expect(written.tokensInput).toBe(20_000)
     expect(written.tokensOutput).toBe(22)
     expect(written.tokensCached).toBe(2304)
+    expect(written.usageDetails.status).toBe('complete')
+    expect(written.usageDetails.events).toHaveLength(1)
+    expect(written.usageDetails.events[0]).toMatchObject({
+      occurredAt: assistantMessageUpdatedEvent.properties.info.time.created,
+      tokensInput: 20_000, tokensOutput: 22, tokensCached: 2304,
+    })
   })
 
   it('uses a generated OpenCode title', async () => {

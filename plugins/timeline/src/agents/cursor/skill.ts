@@ -23,5 +23,6 @@ export function cursorReadSkill(
   if (!read || read.is_error === true || read.isError === true) return undefined
   if (typeof read.content_length !== 'number' || !Number.isInteger(read.content_length)
     || read.content_length < 0) return undefined
-  return skillFromReadPaths(object(input)?.file_path, read.file_path, cwd)
+  const requested = object(input)
+  return skillFromReadPaths(requested?.file_path ?? requested?.path, read.file_path, cwd)
 }

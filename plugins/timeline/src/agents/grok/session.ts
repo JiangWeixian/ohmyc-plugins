@@ -69,6 +69,7 @@ export function parseGrokUsage(input: unknown, nativeSessionId: string): Usage |
     || !nonnegativeInteger(cachedReadTokens)
     || (incomplete !== undefined && incomplete !== true && incomplete !== false)
     || cachedReadTokens > inputTokens) return null
+  // On-disk inputTokens include cached reads. totalTokens is input plus output.
   return {
     input: inputTokens - cachedReadTokens,
     output: outputTokens,
@@ -189,11 +190,17 @@ async function readUsage(summary: Summary): Promise<{
   }
 }
 
+function isSubagentKind(kind: string): boolean {
+  return kind === 'subagent' || kind === 'subagent_fork'
+}
+
 async function findParent(
   child: Summary,
   grokHome: string,
 ): Promise<Summary | null> {
-  if (child.kind !== 'subagent' && child.kind !== 'subagent_fork') return null
+  // An explicit non-child kind never attaches. A missing kind still uses the
+  // parent id or subagent meta, because current summaries omit session_kind.
+  if (child.kind !== '' && !isSubagentKind(child.kind)) return null
   const sessionsRoot = path.join(grokHome, 'sessions')
   if (child.parentId) {
     for (const directory of await directoriesNamed(sessionsRoot, child.parentId)) {
@@ -307,9 +314,8 @@ export async function hydrateGrok(
   }
 
   const usage = await readUsage(summary)
-  if (!usage) return []
   const output: CollectorEvent[] = [metadataEvent(summary, usage, exemplar)]
-  if (usage.usage.status === 'partial') return output
+  if (!usage || usage.usage.status === 'partial') return output
   for (const request of requests) {
     if (request.turnId && request.sourceAt !== undefined
       && usage.sourceAt !== undefined && usage.sourceAt < request.sourceAt) continue

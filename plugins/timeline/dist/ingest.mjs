@@ -1,92 +1,53 @@
 #!/usr/bin/env node
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-4KVEEB7P.js
-var CURRENT_SCHEMA_VERSION = 4;
-var SCHEMA_SQL = `
-CREATE TABLE sessions (
-  session_id        TEXT PRIMARY KEY,
-  project           TEXT NOT NULL,
-  agent_name        TEXT,
-  started_at        INTEGER NOT NULL,
-  ended_at          INTEGER NOT NULL,
-  duration_ms       INTEGER NOT NULL,
-  turns             INTEGER NOT NULL,
-  tokens_input      INTEGER NOT NULL DEFAULT 0,
-  tokens_output     INTEGER NOT NULL DEFAULT 0,
-  tokens_cached     INTEGER NOT NULL DEFAULT 0,
-  summary           TEXT,
-  summary_source    TEXT NOT NULL,
-  transcript_path   TEXT NOT NULL,
-  last_offset       INTEGER NOT NULL,
-  ingested_at       INTEGER NOT NULL,
-  model             TEXT,
-  token_status      TEXT NOT NULL DEFAULT 'legacy'
-                    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'))
-);
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-3DZYXYFD.js
+function totalSessionTokens(session) {
+  return session.tokens_input + session.tokens_output + (session.agent_name === "codex" ? 0 : session.tokens_cached);
+}
 
-CREATE INDEX idx_sessions_started_at ON sessions(started_at DESC);
-CREATE INDEX idx_sessions_project    ON sessions(project, started_at DESC);
-
-CREATE TABLE session_tools (
-  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-  tool_name   TEXT NOT NULL,
-  call_count  INTEGER NOT NULL DEFAULT 1,
-  PRIMARY KEY (session_id, tool_name)
-);
-
-CREATE TABLE session_skills (
-  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
-  skill_name  TEXT NOT NULL,
-  PRIMARY KEY (session_id, skill_name)
-);
-
-CREATE TABLE meta (
-  key    TEXT PRIMARY KEY,
-  value  TEXT NOT NULL
-);
-`;
-var MIGRATIONS = {
-  1: "",
-  2: "ALTER TABLE sessions ADD COLUMN model TEXT;",
-  3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;",
-  4: `ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy'
-    CHECK (token_status IN ('legacy', 'complete', 'partial', 'unavailable'));`
-};
-
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-AQLGXPYT.js
-function ensureTokenStatus(db) {
-  const hasColumn = () => db.prepare("PRAGMA table_info(sessions)").all().some((column) => column.name === "token_status");
-  if (hasColumn()) {
-    return;
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-HH4GFJS4.js
+function storeUsageDetails(db, session, details, ingestedAt) {
+  const insertUsage = db.prepare(`INSERT INTO token_usage_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(source, session_id, event_key) DO UPDATE SET
+    occurred_at=excluded.occurred_at, tokens_input=excluded.tokens_input,
+    tokens_output=excluded.tokens_output, tokens_cached=excluded.tokens_cached,
+    model=excluded.model, ingested_at=excluded.ingested_at`);
+  const clearUsage = db.prepare("DELETE FROM token_usage_events WHERE source=? AND session_id=?");
+  const coverage = db.prepare(`INSERT INTO usage_event_coverage VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(source, session_id) DO UPDATE SET status=excluded.status,
+    reconciled_total=excluded.reconciled_total, updated_at=excluded.updated_at`);
+  const source = session.agent_name ?? "unknown";
+  const total = totalSessionTokens(session);
+  const eventTotal = details.events.reduce((sum, e) => sum + e.tokensInput + e.tokensOutput + e.tokensCached, 0);
+  const status = details.status === "complete" && total !== eventTotal ? "partial" : details.status;
+  if (status === "complete") {
+    clearUsage.run(source, session.session_id);
   }
-  const { timeout } = db.prepare("PRAGMA busy_timeout").get();
-  db.exec("PRAGMA busy_timeout = 1000");
-  try {
-    db.exec("BEGIN IMMEDIATE");
-    try {
-      if (!hasColumn()) {
-        db.exec(MIGRATIONS[4]);
-      }
-      db.prepare("UPDATE meta SET value = '4' WHERE key = 'schema_version' AND value = '3'").run();
-      db.exec("COMMIT");
-    } catch (error) {
-      db.exec("ROLLBACK");
-      throw error;
+  for (const e of details.events) {
+    if (!Number.isSafeInteger(e.occurredAt) || ![e.tokensInput, e.tokensOutput, e.tokensCached].every((n) => Number.isSafeInteger(n) && n >= 0)) {
+      throw new Error("Invalid usage event");
     }
-  } finally {
-    db.exec(`PRAGMA busy_timeout = ${timeout}`);
+    insertUsage.run(source, session.session_id, e.eventKey, e.occurredAt, e.tokensInput, e.tokensOutput, e.tokensCached, e.model, ingestedAt);
   }
+  coverage.run(source, session.session_id, status, total, ingestedAt);
 }
 function createWriter(db) {
-  ensureTokenStatus(db);
   const checkExisting = db.prepare("SELECT 1 FROM sessions WHERE session_id = ?");
   const upsertSession = db.prepare(`
-    INSERT OR REPLACE INTO sessions (
+    INSERT INTO sessions (
       session_id, project, agent_name, started_at, ended_at, duration_ms,
       turns, tokens_input, tokens_output, tokens_cached,
-      summary, summary_source, transcript_path, last_offset, ingested_at, model,
-      token_status
+      summary, summary_source, transcript_path, last_offset, ingested_at, model, token_status
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(session_id) DO UPDATE SET
+      project=excluded.project, agent_name=excluded.agent_name,
+      started_at=excluded.started_at, ended_at=excluded.ended_at,
+      duration_ms=excluded.duration_ms, turns=excluded.turns,
+      tokens_input=excluded.tokens_input, tokens_output=excluded.tokens_output,
+      tokens_cached=excluded.tokens_cached, summary=excluded.summary,
+      summary_source=excluded.summary_source, transcript_path=excluded.transcript_path,
+      last_offset=excluded.last_offset, ingested_at=excluded.ingested_at,
+      model=excluded.model, token_status=excluded.token_status
   `);
   const deleteTools = db.prepare("DELETE FROM session_tools WHERE session_id = ?");
   const insertTool = db.prepare("INSERT OR REPLACE INTO session_tools (session_id, tool_name, call_count) VALUES (?, ?, ?)");
@@ -118,6 +79,15 @@ function createWriter(db) {
           data.model,
           data.tokenStatus ?? "legacy"
         );
+        if (data.usageDetails) {
+          storeUsageDetails(db, {
+            session_id: data.sessionId,
+            agent_name: data.agentName,
+            tokens_input: data.tokensInput,
+            tokens_output: data.tokensOutput,
+            tokens_cached: data.tokensCached
+          }, data.usageDetails, ingestedAt);
+        }
         deleteTools.run(data.sessionId);
         for (const tool of data.tools) {
           insertTool.run(data.sessionId, tool.toolName, tool.callCount);
@@ -138,10 +108,122 @@ function createWriter(db) {
   };
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-GUF2QBYS.js
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-FYCCZAWM.js
 import { readFileSync, statSync } from "fs";
 import os from "os";
 import path from "path";
+function collectClaudeUsage(records) {
+  const messages = /* @__PURE__ */ new Map();
+  let anonymous = 0;
+  for (const value of records) {
+    const row = object(value);
+    const message = object(row?.message);
+    const usage = object(message?.usage);
+    if (row?.type !== "assistant" || message?.role !== "assistant" || !usage) {
+      continue;
+    }
+    const id = typeof message.id === "string" && message.id ? `id:${message.id}` : `row:${anonymous++}`;
+    messages.set(id, usage);
+  }
+  let tokensInput = 0;
+  let tokensOutput = 0;
+  let tokensCached = 0;
+  for (const usage of messages.values()) {
+    const parts = Array.isArray(usage.iterations) && usage.iterations.length > 0 ? usage.iterations : [usage];
+    for (const part of parts) {
+      const item = object(part);
+      tokensInput += count(item?.input_tokens);
+      tokensOutput += count(item?.output_tokens);
+      tokensCached += count(item?.cache_read_input_tokens) + count(item?.cache_creation_input_tokens);
+    }
+  }
+  return { tokensInput, tokensOutput, tokensCached };
+}
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function count(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+var record = (value) => value && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+var count2 = (n) => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+function parseUsageEvents(content, source) {
+  if (!["codex", "claude", "claude-cli"].includes(source)) {
+    return { events: [], status: "unavailable" };
+  }
+  let partial = false;
+  let model = null;
+  let offset = 0;
+  let previous = { input: 0, output: 0, cached: 0 };
+  const events = /* @__PURE__ */ new Map();
+  for (const line of content.split("\n")) {
+    const position = offset;
+    offset += Buffer.byteLength(line, "utf8") + 1;
+    if (!line.trim()) {
+      continue;
+    }
+    let row;
+    try {
+      row = record(JSON.parse(line));
+    } catch {
+      partial = true;
+      continue;
+    }
+    if (!row) {
+      continue;
+    }
+    const payload = record(row.payload);
+    if (row.type === "turn_context" && typeof payload?.model === "string") {
+      model = payload.model;
+    }
+    const occurredAt = typeof row.timestamp === "string" ? Date.parse(row.timestamp) : Number.NaN;
+    if (source === "codex") {
+      const info = row.type === "event_msg" && payload?.type === "token_count" ? record(payload.info) : void 0;
+      const usage = record(info?.total_token_usage) ?? (info && "input_tokens" in info ? info : void 0) ?? (row.type === "turn.completed" ? record(row.usage) : void 0);
+      if (!usage) {
+        continue;
+      }
+      const input = usage.input_tokens;
+      const output = usage.output_tokens;
+      const cached = usage.cached_input_tokens ?? 0;
+      if (![input, output, cached].every(count2) || cached > input) {
+        partial = true;
+        continue;
+      }
+      const delta = { input: input - previous.input, output: output - previous.output, cached: cached - previous.cached };
+      previous = { input, output, cached };
+      if (!Number.isFinite(occurredAt) || delta.input < 0 || delta.output < 0 || delta.cached < 0 || delta.cached > delta.input) {
+        partial = true;
+        continue;
+      }
+      if (delta.input + delta.output === 0) {
+        continue;
+      }
+      events.set(`line:${position}`, {
+        eventKey: `line:${position}`,
+        occurredAt,
+        tokensInput: delta.input - delta.cached,
+        tokensOutput: delta.output,
+        tokensCached: delta.cached,
+        model
+      });
+    } else {
+      const message = record(row.message);
+      if (row.type !== "assistant" || message?.role !== "assistant" || !record(message.usage)) {
+        continue;
+      }
+      const key = typeof message.id === "string" && message.id ? `message:${message.id}` : `line:${position}`;
+      if (!Number.isFinite(occurredAt)) {
+        partial = true;
+        events.delete(key);
+        continue;
+      }
+      const usage = collectClaudeUsage([row]);
+      events.set(key, { eventKey: key, occurredAt, ...usage, model: typeof message.model === "string" ? message.model : null });
+    }
+  }
+  return { events: [...events.values()], status: partial ? "partial" : events.size > 0 ? "complete" : "unavailable" };
+}
 function parseTranscript(sessionId, transcriptPath, options) {
   const agentName = options?.agentName ?? "claude";
   if (agentName === "codex") {
@@ -156,9 +238,7 @@ function parseTranscript(sessionId, transcriptPath, options) {
   let lastTimestamp = null;
   let turns = 0;
   let firstUserMessage = null;
-  let tokensInput = 0;
-  let tokensOutput = 0;
-  let tokensCached = 0;
+  const usageRecords = [];
   const toolCounts = /* @__PURE__ */ new Map();
   const skills = /* @__PURE__ */ new Set();
   let summary = null;
@@ -207,26 +287,7 @@ function parseTranscript(sessionId, transcriptPath, options) {
         if (typeof message.model === "string") {
           model = message.model;
         }
-        const usage = message.usage;
-        if (usage) {
-          const iterations = usage.iterations;
-          if (iterations && iterations.length > 0) {
-            for (const iter of iterations) {
-              tokensInput += Number(iter.input_tokens) || 0;
-              tokensOutput += Number(iter.output_tokens) || 0;
-            }
-            const lastIter = iterations.at(-1);
-            if (lastIter) {
-              tokensCached = Number(lastIter.cache_read_input_tokens) || 0;
-              tokensCached += Number(lastIter.cache_creation_input_tokens) || 0;
-            }
-          } else {
-            tokensInput += Number(usage.input_tokens) || 0;
-            tokensOutput += Number(usage.output_tokens) || 0;
-            tokensCached = Number(usage.cache_read_input_tokens) || 0;
-            tokensCached += Number(usage.cache_creation_input_tokens) || 0;
-          }
-        }
+        usageRecords.push(parsed);
         const content2 = message.content;
         if (Array.isArray(content2)) {
           for (const block of content2) {
@@ -270,9 +331,8 @@ function parseTranscript(sessionId, transcriptPath, options) {
     endedAt,
     durationMs,
     turns,
-    tokensInput,
-    tokensOutput,
-    tokensCached,
+    ...collectClaudeUsage(usageRecords),
+    usageDetails: parseUsageEvents(content, agentName),
     summary,
     summarySource,
     transcriptPath,
@@ -381,6 +441,7 @@ function parseCodexTranscript(sessionId, transcriptPath) {
     sessionId,
     project: displayProject(project2),
     agentName: "codex",
+    usageDetails: parseUsageEvents(readFileSync(transcriptPath, "utf8"), "codex"),
     startedAt,
     endedAt,
     durationMs: endedAt - startedAt,
@@ -448,9 +509,9 @@ function extractCodexMessageText(content) {
     if (!part || typeof part !== "object") {
       return "";
     }
-    const record = part;
-    if (typeof record.text === "string") {
-      return record.text;
+    const record2 = part;
+    if (typeof record2.text === "string") {
+      return record2.text;
     }
     return "";
   }).filter(Boolean).join("\n").trim();
@@ -510,49 +571,124 @@ function extractProjectFromPath(transcriptPath) {
   return "unknown";
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-WK4NZMZ4.js
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-FSXI6P5L.js
+var CURRENT_SCHEMA_VERSION = 5;
+var USAGE_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS token_usage_events (
+  source TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  event_key TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  tokens_input INTEGER NOT NULL CHECK(tokens_input >= 0),
+  tokens_output INTEGER NOT NULL CHECK(tokens_output >= 0),
+  tokens_cached INTEGER NOT NULL CHECK(tokens_cached >= 0),
+  model TEXT,
+  ingested_at INTEGER NOT NULL,
+  PRIMARY KEY(source, session_id, event_key)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_time ON token_usage_events(occurred_at);
+CREATE TABLE IF NOT EXISTS usage_event_coverage (
+  source TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('complete','partial','unavailable')),
+  reconciled_total INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY(source, session_id)
+);
+`;
+var SCHEMA_SQL = `
+CREATE TABLE sessions (
+  session_id        TEXT PRIMARY KEY,
+  project           TEXT NOT NULL,
+  agent_name        TEXT,
+  started_at        INTEGER NOT NULL,
+  ended_at          INTEGER NOT NULL,
+  duration_ms       INTEGER NOT NULL,
+  turns             INTEGER NOT NULL,
+  tokens_input      INTEGER NOT NULL DEFAULT 0,
+  tokens_output     INTEGER NOT NULL DEFAULT 0,
+  tokens_cached     INTEGER NOT NULL DEFAULT 0,
+  summary           TEXT,
+  summary_source    TEXT NOT NULL,
+  transcript_path   TEXT NOT NULL,
+  last_offset       INTEGER NOT NULL,
+  ingested_at       INTEGER NOT NULL,
+  model             TEXT,
+  token_status TEXT NOT NULL DEFAULT 'legacy'
+);
+
+CREATE INDEX idx_sessions_started_at ON sessions(started_at DESC);
+CREATE INDEX idx_sessions_project    ON sessions(project, started_at DESC);
+
+CREATE TABLE session_tools (
+  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  tool_name   TEXT NOT NULL,
+  call_count  INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (session_id, tool_name)
+);
+
+CREATE TABLE session_skills (
+  session_id  TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+  skill_name  TEXT NOT NULL,
+  PRIMARY KEY (session_id, skill_name)
+);
+
+CREATE TABLE meta (
+  key    TEXT PRIMARY KEY,
+  value  TEXT NOT NULL
+);
+${USAGE_SCHEMA_SQL}
+`;
+var MIGRATIONS = {
+  1: "",
+  2: "ALTER TABLE sessions ADD COLUMN model TEXT;",
+  3: "ALTER TABLE sessions ADD COLUMN agent_name TEXT;",
+  4: "ALTER TABLE sessions ADD COLUMN token_status TEXT NOT NULL DEFAULT 'legacy';",
+  5: USAGE_SCHEMA_SQL
+};
+
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-TYMWVW4H.js
 function migrate(db, options) {
-  const targetVersion = options?.currentSchemaVersion ?? CURRENT_SCHEMA_VERSION;
-  const migrations = options?.migrations ?? MIGRATIONS;
-  const metaTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'").get();
-  if (!metaTable) {
-    db.exec(SCHEMA_SQL);
-    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(targetVersion));
-    return;
-  }
-  const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
-  let currentVersion = versionRow ? Number.parseInt(versionRow.value, 10) : 0;
-  if (Number.isNaN(currentVersion)) {
-    currentVersion = 0;
-  }
-  if (currentVersion === 0) {
-    db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(targetVersion));
-    return;
-  }
-  const applyMigrations = db.transaction(() => {
-    while (currentVersion < targetVersion) {
-      const nextVersion = currentVersion + 1;
-      const migrationSql = migrations[nextVersion];
-      if (migrationSql === void 0) {
-        throw new Error(`Missing migration for version ${nextVersion}`);
-      }
-      if (migrationSql) {
-        try {
-          db.exec(migrationSql);
-        } catch (error) {
-          if (!/duplicate column name/i.test(error?.message ?? "")) {
-            throw error;
+  const apply = db.transaction(() => {
+    const targetVersion = options?.currentSchemaVersion ?? CURRENT_SCHEMA_VERSION;
+    const migrations = options?.migrations ?? MIGRATIONS;
+    const metaTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='meta'").get();
+    if (!metaTable) {
+      db.exec(SCHEMA_SQL);
+      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(targetVersion));
+      return;
+    }
+    const versionRow = db.prepare("SELECT value FROM meta WHERE key = 'schema_version'").get();
+    let currentVersion = versionRow ? Number.parseInt(versionRow.value, 10) : 0;
+    if (Number.isNaN(currentVersion)) {
+      currentVersion = 0;
+    }
+    const applyMigrations = () => {
+      while (currentVersion < targetVersion) {
+        const nextVersion = currentVersion + 1;
+        const migrationSql = migrations[nextVersion];
+        if (migrationSql === void 0) {
+          throw new Error(`Missing migration for version ${nextVersion}`);
+        }
+        if (migrationSql) {
+          try {
+            db.exec(migrationSql);
+          } catch (error) {
+            if (!/duplicate column name/i.test(error?.message ?? "")) {
+              throw error;
+            }
           }
         }
+        db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(nextVersion));
+        currentVersion = nextVersion;
       }
-      db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?)").run(String(nextVersion));
-      currentVersion = nextVersion;
-    }
+    };
+    applyMigrations();
   });
-  applyMigrations();
+  apply();
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/chunk-3K3NWBLL.js
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/chunk-3K3NWBLL.js
 function openNodeSqliteDatabase(dbPath) {
   let nativeDb;
   try {
@@ -603,7 +739,7 @@ function isMissingNodeSqlite(error) {
   return error instanceof Error && (error.message.includes("node:sqlite") || error.message.includes("No such built-in module") || error.message.includes("Unknown built-in module"));
 }
 
-// ../../node_modules/.bun/@ohmyc+timeline@+Users+bytedance+Projects+oss+ohmyc-plugins+.superpowers+sdd+2026-09-12-cursor-grok-timeline+artifacts+contention-4948865+ohmyc-timeline-0.1.0.tgz/node_modules/@ohmyc/timeline/dist/index.js
+// ../../node_modules/.bun/@ohmyc+timeline@..+..+vendor+ohmyc-timeline-usage-v5-8b84a5e640bd.tgz/node_modules/@ohmyc/timeline/dist/index.js
 import { mkdirSync } from "fs";
 import os2 from "os";
 import path2 from "path";
@@ -616,9 +752,20 @@ function openDatabase(options) {
   const dbDir = path2.dirname(dbPath);
   mkdirSync(dbDir, { recursive: true });
   const db = openNodeSqliteDatabase(dbPath);
-  db.exec("PRAGMA journal_mode = WAL");
-  db.exec("PRAGMA foreign_keys = ON");
-  migrate(db);
+  const busyTimeoutMs = options?.busyTimeoutMs ?? 2e3;
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 0) {
+    db.close();
+    throw new Error("Invalid SQLite busy timeout");
+  }
+  try {
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
+    migrate(db);
+  } catch (error) {
+    db.close();
+    throw error;
+  }
   return db;
 }
 function closeDatabase(db) {
@@ -1211,42 +1358,6 @@ var CAC = class extends EventEmitter {
 var cac = (name = "") => new CAC(name);
 
 // src/ingest.ts
-import { readFileSync as readFileSync2 } from "fs";
-
-// src/compat/claude-usage.ts
-function collectClaudeUsage(records) {
-  const messages = /* @__PURE__ */ new Map();
-  let anonymous = 0;
-  for (const value of records) {
-    const row = object(value);
-    const message = object(row?.message);
-    const usage = object(message?.usage);
-    if (row?.type !== "assistant" || message?.role !== "assistant" || !usage) continue;
-    const id = typeof message.id === "string" && message.id ? `id:${message.id}` : `row:${anonymous++}`;
-    messages.set(id, usage);
-  }
-  let tokensInput = 0;
-  let tokensOutput = 0;
-  let tokensCached = 0;
-  for (const usage of messages.values()) {
-    const parts = Array.isArray(usage.iterations) && usage.iterations.length ? usage.iterations : [usage];
-    for (const part of parts) {
-      const item = object(part);
-      tokensInput += count(item?.input_tokens);
-      tokensOutput += count(item?.output_tokens);
-      tokensCached += count(item?.cache_read_input_tokens) + count(item?.cache_creation_input_tokens);
-    }
-  }
-  return { tokensInput, tokensOutput, tokensCached };
-}
-function object(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
-}
-function count(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
-}
-
-// src/ingest.ts
 import os3 from "os";
 import path8 from "path";
 
@@ -1278,7 +1389,8 @@ function cursorReadSkill(name, input, output, succeeded, cwd) {
   const read = object2(result);
   if (!read || read.is_error === true || read.isError === true) return void 0;
   if (typeof read.content_length !== "number" || !Number.isInteger(read.content_length) || read.content_length < 0) return void 0;
-  return skillFromReadPaths(object2(input)?.file_path, read.file_path, cwd);
+  const requested = object2(input);
+  return skillFromReadPaths(requested?.file_path ?? requested?.path, read.file_path, cwd);
 }
 
 // src/agents/cursor/hooks.ts
@@ -1879,8 +1991,11 @@ async function readUsage(summary) {
     fileSize: file.size
   };
 }
+function isSubagentKind(kind) {
+  return kind === "subagent" || kind === "subagent_fork";
+}
 async function findParent(child, grokHome2) {
-  if (child.kind !== "subagent" && child.kind !== "subagent_fork") return null;
+  if (child.kind !== "" && !isSubagentKind(child.kind)) return null;
   const sessionsRoot = path5.join(grokHome2, "sessions");
   if (child.parentId) {
     for (const directory of await directoriesNamed(sessionsRoot, child.parentId)) {
@@ -1983,9 +2098,8 @@ async function hydrateGrok(events, grokHome2) {
     }, request.observedAt));
   }
   const usage = await readUsage(summary);
-  if (!usage) return [];
   const output = [metadataEvent(summary, usage, exemplar)];
-  if (usage.usage.status === "partial") return output;
+  if (!usage || usage.usage.status === "partial") return output;
   for (const request of requests) {
     if (request.turnId && request.sourceAt !== void 0 && usage.sourceAt !== void 0 && usage.sourceAt < request.sourceAt) continue;
     output.push(event2({
@@ -2541,24 +2655,28 @@ cli.parse();
 async function runDiskMode(sessionId, transcriptPath, agentName) {
   const db = openDatabase();
   try {
-    const data = parseTranscript(sessionId, transcriptPath, { agentName });
-    if (agentName === "claude") {
-      const records = readFileSync2(transcriptPath, "utf8").split("\n").flatMap((line) => {
-        try {
-          return [JSON.parse(line)];
-        } catch {
-          return [];
-        }
-      });
-      Object.assign(data, collectClaudeUsage(records));
-    }
-    createWriter(db).writeSession(data);
+    createWriter(db).writeSession(parseTranscript(sessionId, transcriptPath, { agentName }));
   } finally {
     closeDatabase(db);
   }
 }
+var transcriptUsageAgents = /* @__PURE__ */ new Set(["claude", "claude-cli", "codex"]);
+function applyTranscriptUsage(data) {
+  const agentName = data.agentName ?? "";
+  if (!transcriptUsageAgents.has(agentName)) return;
+  try {
+    const parsed = parseTranscript(data.sessionId, data.transcriptPath, { agentName });
+    data.tokensInput = parsed.tokensInput;
+    data.tokensOutput = parsed.tokensOutput;
+    data.tokensCached = parsed.tokensCached;
+    data.usageDetails = parsed.usageDetails;
+  } catch {
+    data.usageDetails = { events: [], status: "unavailable" };
+  }
+}
 async function runRawMode() {
   const data = await readJsonStdin("--raw");
+  applyTranscriptUsage(data);
   const db = openDatabase();
   try {
     createWriter(db).writeSession(data);
@@ -2602,7 +2720,7 @@ async function withCollectorWriter(action) {
   let writer;
   try {
     await action((data) => {
-      db ??= openDatabase();
+      db ??= openDatabase({ busyTimeoutMs: 100 });
       writer ??= createWriter(db);
       return writer.writeSession(data);
     });

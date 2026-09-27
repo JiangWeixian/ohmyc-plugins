@@ -6,8 +6,6 @@ import { closeDatabase, openDatabase } from '@ohmyc/timeline'
 import { parseTranscript } from '@ohmyc/timeline/ingest'
 import { createWriter } from '@ohmyc/timeline/writer'
 import { cac } from 'cac'
-import { readFileSync } from 'node:fs'
-import { collectClaudeUsage } from './compat/claude-usage'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -79,21 +77,31 @@ cli.parse()
 async function runDiskMode(sessionId: string, transcriptPath: string, agentName: string): Promise<void> {
   const db = openDatabase()
   try {
-    const data = parseTranscript(sessionId, transcriptPath, { agentName })
-    if (agentName === 'claude') {
-      const records = readFileSync(transcriptPath, 'utf8').split('\n').flatMap(line => {
-        try { return [JSON.parse(line)] } catch { return [] }
-      })
-      Object.assign(data, collectClaudeUsage(records))
-    }
-    createWriter(db).writeSession(data)
+    createWriter(db).writeSession(parseTranscript(sessionId, transcriptPath, { agentName }))
   } finally {
     closeDatabase(db)
   }
 }
 
+const transcriptUsageAgents = new Set(['claude', 'claude-cli', 'codex'])
+
+function applyTranscriptUsage(data: ParsedSessionData): void {
+  const agentName = data.agentName ?? ''
+  if (!transcriptUsageAgents.has(agentName)) return
+  try {
+    const parsed = parseTranscript(data.sessionId, data.transcriptPath, { agentName })
+    data.tokensInput = parsed.tokensInput
+    data.tokensOutput = parsed.tokensOutput
+    data.tokensCached = parsed.tokensCached
+    data.usageDetails = parsed.usageDetails
+  } catch {
+    data.usageDetails = { events: [], status: 'unavailable' }
+  }
+}
+
 async function runRawMode(): Promise<void> {
   const data = await readJsonStdin('--raw') as ParsedSessionData
+  applyTranscriptUsage(data)
   const db = openDatabase()
   try {
     createWriter(db).writeSession(data)
@@ -148,7 +156,7 @@ async function withCollectorWriter(
   let writer: ReturnType<typeof createWriter> | undefined
   try {
     await action(data => {
-      db ??= openDatabase()
+      db ??= openDatabase({ busyTimeoutMs: 100 })
       writer ??= createWriter(db)
       return writer.writeSession(data)
     })
