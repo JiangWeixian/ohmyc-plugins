@@ -205,6 +205,15 @@ describe('ingest-claude.sh', () => {
       expect(captured.agentName).toBe('claude')
     })
 
+    it('counts the latest usage snapshot once per message', () => {
+      const row = (id: string, output: number) => JSON.stringify({ type: 'assistant', timestamp: '2026-04-30T10:00:05.000Z', message: {
+        id, role: 'assistant', usage: { input_tokens: 10, output_tokens: output, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 },
+      } })
+      writeTranscript(fakeClaudeDir, 'duplicates', [row('a', 1), row('a', 5), row('b', 3)])
+      expect(runIngest(['duplicates']).status).toBe(0)
+      expect(readCaptured()).toMatchObject({ tokensInput: 20, tokensOutput: 8, tokensCached: 100 })
+    })
+
     it('extracts model from assistant messages', () => {
       writeTranscript(fakeClaudeDir, 'test-model', FIXTURES.fullSession)
 

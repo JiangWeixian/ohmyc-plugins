@@ -76,6 +76,12 @@ if command -v jq >/dev/null 2>&1; then
 
   set +e
   EXTRACTED=$(jq -s '
+    def usage_rows:
+      to_entries
+      | map(select(.value.type == "assistant" and .value.message.role == "assistant" and .value.message.usage)
+          | {key: (if (.value.message.id | type) == "string" and .value.message.id != "" then "id:" + .value.message.id else "row:" + (.key | tostring) end), value: .value.message.usage})
+      | group_by(.key) | map(last.value) | .[]
+      | if (.iterations | type) == "array" and (.iterations | length) > 0 then .iterations[] else . end;
     ($transcriptPath | split("/") | .[] | select(. == "projects") as $marker |
       ($transcriptPath | split("/") | index($marker)) as $idx |
       ($transcriptPath | split("/")[($idx + 1):][0]) as $encoded |
@@ -99,9 +105,9 @@ if command -v jq >/dev/null 2>&1; then
       endedAt: $endedAt,
       durationMs: ($endedAt - $startedAt),
       turns: ([.[] | select(.type == "user" and .message.role == "user" and (.message.content | type) == "string")] | length),
-      tokensInput: ([.[] | select(.type == "assistant" and .message.usage) | .message.usage | if .iterations then (.iterations | map(.input_tokens // 0) | add) else (.input_tokens // 0) end] | add // 0),
-      tokensOutput: ([.[] | select(.type == "assistant" and .message.usage) | .message.usage | if .iterations then (.iterations | map(.output_tokens // 0) | add) else (.output_tokens // 0) end] | add // 0),
-      tokensCached: ([.[] | select(.type == "assistant" and .message.usage) | .message.usage | if .iterations then (.iterations | map((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) | add) else ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0)) end] | add // 0),
+      tokensInput: ([usage_rows | (.input_tokens // 0)] | add // 0),
+      tokensOutput: ([usage_rows | (.output_tokens // 0)] | add // 0),
+      tokensCached: ([usage_rows | ((.cache_read_input_tokens // 0) + (.cache_creation_input_tokens // 0))] | add // 0),
       summary: (if $awaySummary then $awaySummary elif $firstUserMessage then (if ($firstUserMessage | length) > 140 then ($firstUserMessage[:140]) else $firstUserMessage end) else "(untitled session)" end),
       summarySource: (if $awaySummary then "auto" elif $firstUserMessage then "first_message" else "auto" end),
       transcriptPath: $transcriptPath,

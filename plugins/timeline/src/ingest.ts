@@ -6,6 +6,8 @@ import { closeDatabase, openDatabase } from '@ohmyc/timeline'
 import { parseTranscript } from '@ohmyc/timeline/ingest'
 import { createWriter } from '@ohmyc/timeline/writer'
 import { cac } from 'cac'
+import { readFileSync } from 'node:fs'
+import { collectClaudeUsage } from './compat/claude-usage'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -78,6 +80,12 @@ async function runDiskMode(sessionId: string, transcriptPath: string, agentName:
   const db = openDatabase()
   try {
     const data = parseTranscript(sessionId, transcriptPath, { agentName })
+    if (agentName === 'claude') {
+      const records = readFileSync(transcriptPath, 'utf8').split('\n').flatMap(line => {
+        try { return [JSON.parse(line)] } catch { return [] }
+      })
+      Object.assign(data, collectClaudeUsage(records))
+    }
     createWriter(db).writeSession(data)
   } finally {
     closeDatabase(db)

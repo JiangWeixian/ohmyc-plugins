@@ -1211,6 +1211,42 @@ var CAC = class extends EventEmitter {
 var cac = (name = "") => new CAC(name);
 
 // src/ingest.ts
+import { readFileSync as readFileSync2 } from "fs";
+
+// src/compat/claude-usage.ts
+function collectClaudeUsage(records) {
+  const messages = /* @__PURE__ */ new Map();
+  let anonymous = 0;
+  for (const value of records) {
+    const row = object(value);
+    const message = object(row?.message);
+    const usage = object(message?.usage);
+    if (row?.type !== "assistant" || message?.role !== "assistant" || !usage) continue;
+    const id = typeof message.id === "string" && message.id ? `id:${message.id}` : `row:${anonymous++}`;
+    messages.set(id, usage);
+  }
+  let tokensInput = 0;
+  let tokensOutput = 0;
+  let tokensCached = 0;
+  for (const usage of messages.values()) {
+    const parts = Array.isArray(usage.iterations) && usage.iterations.length ? usage.iterations : [usage];
+    for (const part of parts) {
+      const item = object(part);
+      tokensInput += count(item?.input_tokens);
+      tokensOutput += count(item?.output_tokens);
+      tokensCached += count(item?.cache_read_input_tokens) + count(item?.cache_creation_input_tokens);
+    }
+  }
+  return { tokensInput, tokensOutput, tokensCached };
+}
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function count(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+// src/ingest.ts
 import os3 from "os";
 import path8 from "path";
 
@@ -1226,7 +1262,7 @@ function skillFromReadPaths(input, output, cwd) {
 }
 
 // src/agents/cursor/skill.ts
-function object(value) {
+function object2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function cursorReadSkill(name, input, output, succeeded, cwd) {
@@ -1239,10 +1275,10 @@ function cursorReadSkill(name, input, output, succeeded, cwd) {
       return void 0;
     }
   }
-  const read = object(result);
+  const read = object2(result);
   if (!read || read.is_error === true || read.isError === true) return void 0;
   if (typeof read.content_length !== "number" || !Number.isInteger(read.content_length) || read.content_length < 0) return void 0;
-  return skillFromReadPaths(object(input)?.file_path, read.file_path, cwd);
+  return skillFromReadPaths(object2(input)?.file_path, read.file_path, cwd);
 }
 
 // src/agents/cursor/hooks.ts
@@ -1286,7 +1322,7 @@ function detectHost(input, env) {
 }
 
 // src/agents/cursor/hooks.ts
-function object2(value) {
+function object3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text(value) {
@@ -1314,7 +1350,7 @@ function createEvent(semantic, observedAt, identity) {
   };
 }
 function parseCursorHook(input, observedAt) {
-  const payload = object2(input);
+  const payload = object3(input);
   if (!payload || !Number.isFinite(observedAt)) return [];
   const nativeSessionId = text(payload.conversation_id);
   const hook = text(payload.hook_event_name);
@@ -1385,14 +1421,14 @@ function parseCursorHook(input, observedAt) {
 // src/agents/cursor/transcript.ts
 import { createHash as createHash2 } from "crypto";
 import { readFile, stat } from "fs/promises";
-function object3(value) {
+function object4(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.flatMap((block) => {
-    const value = object3(block);
+    const value = object4(block);
     return value?.type === "text" && typeof value.text === "string" ? [value.text] : [];
   }).join("\n");
 }
@@ -1427,7 +1463,7 @@ async function readTranscript(transcriptPath) {
   for (const [index, line] of lines.entries()) {
     if (!line.trim()) continue;
     try {
-      const value = object3(JSON.parse(line));
+      const value = object4(JSON.parse(line));
       if (value) parsed.push(value);
     } catch {
       if (index === lines.length - 1 && !hasTrailingNewline) {
@@ -1444,11 +1480,11 @@ async function readTranscript(transcriptPath) {
   let current;
   for (const row of parsed) {
     const role = typeof row.role === "string" ? row.role : void 0;
-    const message = object3(row.message);
+    const message = object4(row.message);
     const content = contentText(message?.content);
     const blocks = Array.isArray(message?.content) ? message.content : [];
     for (const block of blocks) {
-      const result = object3(block);
+      const result = object4(block);
       if (result?.type !== "tool_result" || typeof result.tool_use_id !== "string") continue;
       const pending = pendingTools.get(result.tool_use_id);
       if (!pending) continue;
@@ -1461,7 +1497,7 @@ async function readTranscript(transcriptPath) {
       if (skill) pending.tool.skill = skill;
       pendingTools.delete(result.tool_use_id);
     }
-    if (role === "user" && blocks.some((block) => object3(block)?.type === "tool_result")) continue;
+    if (role === "user" && blocks.some((block) => object4(block)?.type === "tool_result")) continue;
     if (role === "user") {
       const prompt = nativeUserQuery(content);
       if (!prompt) {
@@ -1473,10 +1509,10 @@ async function readTranscript(transcriptPath) {
       current = { prompt, ordinal, hasAssistantActivity: false, tools: [] };
       turns.push(current);
     } else if (role === "assistant" && current) {
-      const hasTool = blocks.some((block) => object3(block)?.type === "tool_use");
+      const hasTool = blocks.some((block) => object4(block)?.type === "tool_use");
       if (content.trim() || hasTool) current.hasAssistantActivity = true;
       for (const block of blocks) {
-        const tool = object3(block);
+        const tool = object4(block);
         if (tool?.type === "tool_use" && typeof tool.id === "string" && tool.id.trim() && typeof tool.name === "string" && tool.name.trim()) {
           const collected = { id: tool.id, name: tool.name };
           current.tools.push(collected);
@@ -1578,15 +1614,15 @@ async function hydrateCursor(events) {
 }
 
 // src/agents/grok/skill.ts
-function object4(value) {
+function object5(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function grokReadSkill(name, input, output, succeeded, cwd) {
   if (!succeeded || name !== "read_file") return void 0;
-  const result = object4(output);
-  const content = object4(result?.FileContent);
+  const result = object5(output);
+  const content = object5(result?.FileContent);
   if (result?.type !== "ReadFile" || "FileNotFound" in result || result.is_error === true || result.isError === true || typeof content?.content !== "string") return void 0;
-  return skillFromReadPaths(object4(input)?.target_file, content.absolute_path, cwd);
+  return skillFromReadPaths(object5(input)?.target_file, content.absolute_path, cwd);
 }
 
 // src/agents/grok/hooks.ts
@@ -1610,7 +1646,7 @@ var confirms = /* @__PURE__ */ new Set([
   "stop_failure",
   "stop_cancelled"
 ]);
-function object5(value) {
+function object6(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text2(value) {
@@ -1629,7 +1665,7 @@ function createEvent2(semantic, observedAt, identity = {}) {
   };
 }
 function parseGrokHook(input, observedAt) {
-  const payload = object5(input);
+  const payload = object6(input);
   if (!payload || !Number.isFinite(observedAt)) return [];
   const nativeSessionId = text2(payload.sessionId);
   const nativeHook = text2(payload.hookEventName);
@@ -1709,7 +1745,7 @@ function parseGrokHook(input, observedAt) {
 // src/agents/grok/session.ts
 import { readdir, readFile as readFile2, stat as stat2 } from "fs/promises";
 import path5 from "path";
-function object6(value) {
+function object7(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text3(value) {
@@ -1731,8 +1767,8 @@ function withoutIdentity2(source) {
   return semantic;
 }
 function parseGrokUsage(input, nativeSessionId) {
-  const payload = object6(input);
-  const session = object6(payload?.session);
+  const payload = object7(input);
+  const session = object7(payload?.session);
   if (text3(payload?.sessionId) !== nativeSessionId || !session) return null;
   const inputTokens = session.inputTokens;
   const outputTokens = session.outputTokens;
@@ -1761,11 +1797,11 @@ async function stableRead(filePath) {
 function parseSummary(file, expectedId) {
   let payload;
   try {
-    payload = object6(JSON.parse(file.raw));
+    payload = object7(JSON.parse(file.raw));
   } catch {
     return null;
   }
-  const info = object6(payload?.info);
+  const info = object7(payload?.info);
   if (text3(info?.id) !== expectedId) return null;
   if (payload?.chat_format_version !== 1) {
     console.warn("[timeline] unsupported Grok chat format");
@@ -1839,7 +1875,7 @@ async function readUsage(summary) {
   if (!summaryAfter || summaryAfter.size !== summary.fileSize || summaryAfter.mtimeMs !== summary.mtimeMs) return null;
   return {
     usage,
-    sourceAt: timestamp(object6(payload)?.updatedAt),
+    sourceAt: timestamp(object7(payload)?.updatedAt),
     fileSize: file.size
   };
 }
@@ -1881,7 +1917,7 @@ async function findParent(child, grokHome2) {
       if (!metaFile) continue;
       let meta;
       try {
-        meta = object6(JSON.parse(metaFile.raw));
+        meta = object7(JSON.parse(metaFile.raw));
       } catch {
         continue;
       }
@@ -2506,6 +2542,16 @@ async function runDiskMode(sessionId, transcriptPath, agentName) {
   const db = openDatabase();
   try {
     const data = parseTranscript(sessionId, transcriptPath, { agentName });
+    if (agentName === "claude") {
+      const records = readFileSync2(transcriptPath, "utf8").split("\n").flatMap((line) => {
+        try {
+          return [JSON.parse(line)];
+        } catch {
+          return [];
+        }
+      });
+      Object.assign(data, collectClaudeUsage(records));
+    }
     createWriter(db).writeSession(data);
   } finally {
     closeDatabase(db);

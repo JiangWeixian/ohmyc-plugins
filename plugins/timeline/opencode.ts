@@ -486,7 +486,8 @@ export function createEventHandler(deps: EventHandlerDeps) {
       model: info.modelID ? String(info.modelID) : null,
       tokens: {
         input: Number(info.tokens?.input ?? 0),
-        output: Number(info.tokens?.output ?? 0),
+        // OpenCode exposes reasoning separately from visible output.
+        output: Number(info.tokens?.output ?? 0) + Number(info.tokens?.reasoning ?? 0),
         cached: Number(cache?.read ?? 0) + Number(cache?.write ?? 0),
       },
     }
