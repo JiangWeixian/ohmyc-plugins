@@ -111,7 +111,7 @@ describe('native Cursor and Grok plugin metadata', () => {
       expect(registrations).toEqual([{
         hooks: [{
           type: 'command',
-          command: '\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"',
+          command: './ingest.sh',
           timeout: 3,
         }],
       }])
