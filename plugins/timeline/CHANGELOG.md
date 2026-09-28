@@ -1,5 +1,16 @@
 # @ohmyc/timeline-plugin
 
+## 1.1.0
+
+### Minor Changes
+
+- ed59c70: Add native Cursor and Grok Build session collection with durable replay and token completeness.
+
+### Patch Changes
+
+- 9574cbd: Call the Grok collector with a path next to its hook file, so Grok can run the script after a hooks reload instead of failing with command not found.
+- ed59c70: Record a Grok model and title before usage is flushed, attach child sessions that omit session kind, and take Claude, Codex, and OpenCode token totals from the same transcript parse as the usage ledger.
+
 ## 1.0.7
 
 ### Patch Changes
