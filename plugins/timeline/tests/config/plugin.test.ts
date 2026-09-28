@@ -35,10 +35,114 @@ describe('npm package contents', () => {
     expect(packageJson.files).toEqual(expect.arrayContaining([
       '.claude-plugin',
       '.codex-plugin',
+      '.cursor-plugin',
+      '.grok-plugin',
       'dist',
       'hooks',
     ]))
     expect(packageJson.files).not.toContain('.agents')
+  })
+})
+
+describe('native Cursor and Grok plugin metadata', () => {
+  const pluginRoot = path.resolve(import.meta.dirname, '../..')
+  const repoRoot = path.resolve(pluginRoot, '../..')
+  const packageVersion = (JSON.parse(
+    readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'),
+  ) as { version: string }).version
+
+  it.each(['cursor', 'grok'])('ships native %s metadata and hook configuration', (host) => {
+    const manifest = JSON.parse(readFileSync(
+      path.join(pluginRoot, `.${host}-plugin/plugin.json`),
+      'utf8',
+    )) as { name: string; version: string; hooks: string }
+
+    expect(manifest.name).toBe('timeline')
+    expect(manifest.version).toBe(packageVersion)
+    expect(manifest.hooks).toBe(`./hooks/${host}/hooks.json`)
+    expect(existsSync(path.join(pluginRoot, `hooks/${host}/hooks.json`))).toBe(true)
+  })
+
+  it('uses the install root for every Cursor hook command', () => {
+    const config = JSON.parse(readFileSync(
+      path.join(pluginRoot, 'hooks/cursor/hooks.json'),
+      'utf8',
+    )) as { version: number; hooks: Record<string, Array<{ command: string; timeout: number }>> }
+
+    expect(config.version).toBe(1)
+    expect(Object.keys(config.hooks)).toEqual([
+      'sessionStart',
+      'beforeSubmitPrompt',
+      'postToolUse',
+      'postToolUseFailure',
+      'afterAgentResponse',
+      'stop',
+      'sessionEnd',
+    ])
+    for (const registrations of Object.values(config.hooks)) {
+      expect(registrations).toEqual([{
+        command: '\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"',
+        timeout: 3,
+      }])
+    }
+  })
+
+  it('registers every Grok event understood by the collector', () => {
+    const config = JSON.parse(readFileSync(
+      path.join(pluginRoot, 'hooks/grok/hooks.json'),
+      'utf8',
+    )) as {
+      hooks: Record<string, Array<{ hooks: Array<{ type: string; command: string; timeout: number }> }>>
+    }
+
+    expect(Object.keys(config.hooks)).toEqual([
+      'SessionStart',
+      'UserPromptSubmit',
+      'PostToolUse',
+      'PostToolUseFailure',
+      'Stop',
+      'StopFailure',
+      'StopCancelled',
+      'SubagentStart',
+      'SubagentStop',
+      'SessionEnd',
+    ])
+    for (const registrations of Object.values(config.hooks)) {
+      expect(registrations).toEqual([{
+        hooks: [{
+          type: 'command',
+          command: '\"${GROK_PLUGIN_ROOT}/hooks/grok/ingest.sh\"',
+          timeout: 3,
+        }],
+      }])
+    }
+  })
+
+  it('publishes native marketplace entries from the plugin subdirectory', () => {
+    const cursor = JSON.parse(readFileSync(
+      path.join(repoRoot, '.cursor-plugin/marketplace.json'),
+      'utf8',
+    )) as { name: string; plugins: Array<{ name: string; source: string; version: string }> }
+    const grok = JSON.parse(readFileSync(
+      path.join(repoRoot, '.grok-plugin/marketplace.json'),
+      'utf8',
+    )) as {
+      name: string
+      plugins: Array<{ name: string; source: { type: string; path: string }; version: string }>
+    }
+
+    expect(cursor.name).toBe('ohmyc')
+    expect(cursor.plugins[0]).toMatchObject({
+      name: 'timeline',
+      source: './plugins/timeline',
+      version: packageVersion,
+    })
+    expect(grok.name).toBe('ohmyc')
+    expect(grok.plugins[0]).toMatchObject({
+      name: 'timeline',
+      source: { type: 'local', path: './plugins/timeline' },
+      version: packageVersion,
+    })
   })
 })
 
@@ -94,10 +198,30 @@ describe('manifest versions', () => {
       readFileSync(path.join(repoRoot, 'plugins/timeline/.codex-plugin/plugin.json'), 'utf8'),
     ) as { version: string }
 
+    const nativeVersions = [
+      '.cursor-plugin/marketplace.json',
+      '.grok-plugin/marketplace.json',
+    ].map(file => {
+      const doc = JSON.parse(readFileSync(path.join(repoRoot, file), 'utf8')) as {
+        plugins: Array<{ name: string; version: string }>
+      }
+      return doc.plugins.find(plugin => plugin.name === 'timeline')!.version
+    })
+    nativeVersions.push(...[
+      'plugins/timeline/.cursor-plugin/plugin.json',
+      'plugins/timeline/.grok-plugin/plugin.json',
+    ].map(file => {
+      const doc = JSON.parse(readFileSync(path.join(repoRoot, file), 'utf8')) as { version: string }
+      return doc.version
+    }))
+
     const entry = marketplace.plugins.find(plugin => plugin.name === 'timeline')
     expect(core(entry!.version)).toBe(pkg.version)
     expect(core(claudePlugin.version)).toBe(pkg.version)
     expect(core(codexPlugin.version)).toBe(pkg.version)
+    for (const version of nativeVersions) {
+      expect(core(version)).toBe(pkg.version)
+    }
   })
 })
 
@@ -158,15 +282,15 @@ describe('Codex marketplace entry', () => {
 })
 
 describe('hook configuration compatibility', () => {
-  it('routes the default plugin Stop hook to the Codex and Claude entrypoints', () => {
+  it('routes the default plugin Stop hook through the shared dispatcher', () => {
     const hooksJson = JSON.parse(
       readFileSync(path.resolve(import.meta.dirname, '../../hooks/hooks.json'), 'utf8'),
     ) as { hooks: { Stop: Array<{ hooks: Array<{ command: string }> }> } }
 
     const command = hooksJson.hooks.Stop[0].hooks[0].command
-    expect(command).toContain('$' + '{PLUGIN_ROOT}/hooks/ingest-codex.sh')
-    expect(command).toContain('$' + '{CLAUDE_PLUGIN_ROOT}/hooks/ingest-claude.sh')
-    expect(command).toContain('$CLAUDE_SESSION_ID')
+    expect(command).toContain('/hooks/shared/ingest-stop.sh')
+    expect(command).toContain('PLUGIN_ROOT')
+    expect(command).toContain('CLAUDE_PLUGIN_ROOT')
   })
 })
 

@@ -2,8 +2,13 @@ name: Bun CI
 
 on:
   push:
+    branches: [main, master, "releases/*"]
   pull_request:
     branches: [main, master]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:

@@ -8,6 +8,8 @@
   "files": [
     ".claude-plugin",
     ".codex-plugin",
+    ".cursor-plugin",
+    ".grok-plugin",
     "assets",
     "dist",
     "hooks",
@@ -28,7 +30,7 @@
   },
   "devDependencies": {
     "@changesets/cli": "^2.27.12",
-    "@ohmyc/timeline": "0.0.0-snapshot-20260614095355",
+    "@ohmyc/timeline": "file:../../vendor/ohmyc-timeline-usage-v5-8b84a5e640bd.tgz",
     "@opencode-ai/plugin": "^1.16.0",
     "@types/node": "^22.13.0",
     "@vitest/coverage-v8": "^3.2.4",

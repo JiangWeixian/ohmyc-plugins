@@ -1,0 +1,87 @@
+[
+  {
+    "conversation_id": "c1",
+    "generation_id": "c1",
+    "model": "cursor-grok-4.6-high-fast",
+    "is_background_agent": false,
+    "session_id": "c1",
+    "hook_event_name": "sessionStart",
+    "cursor_version": "2026.09.02-c22c1a3",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": null
+  },
+  {
+    "conversation_id": "c1",
+    "generation_id": "c1",
+    "model": "cursor-grok-4.6-high-fast",
+    "reason": "completed",
+    "duration_ms": 13838,
+    "is_background_agent": false,
+    "final_status": "completed",
+    "session_id": "c1",
+    "hook_event_name": "sessionEnd",
+    "cursor_version": "2026.09.02-c22c1a3",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/c1/c1.jsonl"
+  },
+  {
+    "conversation_id": "c1",
+    "generation_id": "c1",
+    "model": "grok-4.6",
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/tmp/timeline-fixture/definitely-missing-timeline-fixture.txt"
+    },
+    "error_message": "File not found: /tmp/timeline-fixture/definitely-missing-timeline-fixture.txt",
+    "failure_type": "error",
+    "duration": 885.114,
+    "tool_use_id": "call1",
+    "is_interrupt": false,
+    "session_id": "c1",
+    "hook_event_name": "postToolUseFailure",
+    "cursor_version": "2026.09.10-fd3934a",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/c1/c1.jsonl"
+  },
+  {
+    "conversation_id": "c1",
+    "generation_id": "c1",
+    "model": "grok-4.6",
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/tmp/timeline-fixture/capture.mjs"
+    },
+    "tool_output": "{\"file_path\":\"/tmp/timeline-fixture/capture.mjs\",\"content_length\":267}",
+    "duration": 1077.082,
+    "tool_use_id": "call2",
+    "session_id": "c1",
+    "hook_event_name": "postToolUse",
+    "cursor_version": "2026.09.10-fd3934a",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/c1/c1.jsonl"
+  },
+  {
+    "conversation_id": "c1",
+    "generation_id": "c1",
+    "model": "cursor-grok-4.6-high-fast",
+    "reason": "completed",
+    "duration_ms": 17624,
+    "is_background_agent": false,
+    "final_status": "completed",
+    "session_id": "c1",
+    "hook_event_name": "sessionEnd",
+    "cursor_version": "2026.09.10-fd3934a",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/c1/c1.jsonl"
+  }
+]

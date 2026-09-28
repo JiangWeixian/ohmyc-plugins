@@ -366,7 +366,7 @@ describe('createEventHandler', () => {
     expect(mockWriter.writeSession.mock.calls.at(-1)![0].turns).toBeGreaterThanOrEqual(2)
   })
 
-  it('replaces repeated message updates instead of double-counting', async () => {
+  it('replaces repeated message updates and includes reasoning output once', async () => {
     const { handler } = createHandler()
     const updatedAssistantMessage = {
       ...assistantMessageUpdatedEvent,
@@ -374,7 +374,7 @@ describe('createEventHandler', () => {
         ...assistantMessageUpdatedEvent.properties,
         info: {
           ...assistantMessageUpdatedEvent.properties.info,
-          tokens: { input: 20_000, output: 15, reasoning: 0, cache: { read: 2048, write: 256 } },
+          tokens: { input: 20_000, output: 15, reasoning: 7, cache: { read: 2048, write: 256 } },
         },
       },
     }
@@ -389,8 +389,14 @@ describe('createEventHandler', () => {
     const written = mockWriter.writeSession.mock.calls.at(-1)![0]
     expect(written.turns).toBe(1)
     expect(written.tokensInput).toBe(20_000)
-    expect(written.tokensOutput).toBe(15)
+    expect(written.tokensOutput).toBe(22)
     expect(written.tokensCached).toBe(2304)
+    expect(written.usageDetails.status).toBe('complete')
+    expect(written.usageDetails.events).toHaveLength(1)
+    expect(written.usageDetails.events[0]).toMatchObject({
+      occurredAt: assistantMessageUpdatedEvent.properties.info.time.created,
+      tokensInput: 20_000, tokensOutput: 22, tokensCached: 2304,
+    })
   })
 
   it('uses a generated OpenCode title', async () => {

@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ],
+    "stop": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "\"${CURSOR_PLUGIN_ROOT}/hooks/cursor/ingest.sh\"",
+        "timeout": 3
+      }
+    ]
+  }
+}

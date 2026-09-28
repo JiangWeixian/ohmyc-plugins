@@ -1,0 +1,53 @@
+[
+  {
+    "conversation_id": "cancel-c1",
+    "generation_id": "cancel-c1",
+    "model": "grok-4.6",
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/tmp/timeline-fixture/capture.mjs"
+    },
+    "tool_output": "{\"file_path\":\"/tmp/timeline-fixture/capture.mjs\",\"content_length\":267}",
+    "duration": 1144.657,
+    "tool_use_id": "cancel-call1",
+    "session_id": "cancel-c1",
+    "hook_event_name": "postToolUse",
+    "cursor_version": "2026.09.10-fd3934a",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/cancel-c1/cancel-c1.jsonl"
+  },
+  {
+    "conversation_id": "cancel-c1",
+    "generation_id": "cancel-c1",
+    "model": "cursor-grok-4.6-high-fast",
+    "reason": "error",
+    "duration_ms": 47965,
+    "is_background_agent": false,
+    "final_status": "error",
+    "session_id": "cancel-c1",
+    "hook_event_name": "sessionEnd",
+    "cursor_version": "2026.09.10-fd3934a",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/cancel-c1/cancel-c1.jsonl"
+  },
+  {
+    "conversation_id": "cancel-c1",
+    "generation_id": "cancel-c1",
+    "model": "cursor-grok-4.6-high-fast",
+    "reason": "completed",
+    "duration_ms": 12079,
+    "is_background_agent": false,
+    "final_status": "completed",
+    "session_id": "cancel-c1",
+    "hook_event_name": "sessionEnd",
+    "cursor_version": "2026.09.10-fd3934a",
+    "workspace_roots": [
+      "/tmp/timeline-fixture"
+    ],
+    "transcript_path": "/home/fixture/.cursor/projects/tmp-timeline-fixture/agent-transcripts/cancel-c1/cancel-c1.jsonl"
+  }
+]

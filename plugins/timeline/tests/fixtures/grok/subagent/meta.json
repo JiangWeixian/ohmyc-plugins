@@ -1,0 +1,18 @@
+{
+  "subagent_id": "child",
+  "attempt_id": "at1.9caec7aa387f4e098fe8a0cdcb63e6ba",
+  "parent_session_id": "parent",
+  "child_session_id": "child",
+  "subagent_type": "general-purpose",
+  "description": "Read child-fixture.txt",
+  "prompt": "Read the file child-fixture.txt in the current working directory (the workspace root). Report back the exact full text contents of that file and nothing else. Do not edit any files. Do not use any other project.",
+  "status": "completed",
+  "started_at": "2026-09-12T10:41:17.451938Z",
+  "completed_at": "2026-09-12T10:41:23.118847Z",
+  "duration_ms": 5664,
+  "tool_calls": 1,
+  "turns": 1,
+  "effective_context_source": "new",
+  "child_cwd": "/tmp/timeline-fixture",
+  "effective_model_id": "grok-4.6"
+}

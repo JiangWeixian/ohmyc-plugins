@@ -17,10 +17,12 @@ bun install --frozen-lockfile
 Build both runtime outputs before testing packaging or local plugin installs:
 
 ```bash
+cd plugins/timeline
 bun run build
 ```
 
-The build writes `dist/ingest.mjs` for Claude Code and Codex hooks, and `dist/index.js` for OpenCode.
+The build writes `dist/ingest.mjs` for Claude Code, Codex, Cursor, and Grok
+hooks, and `dist/index.js` for OpenCode.
 
 ## Local Agent Testing
 
@@ -56,7 +58,7 @@ codex
 Build the plugin and copy the OpenCode bundle into the project you want to test:
 
 ```bash
-bun install --frozen-lockfile
+cd plugins/timeline
 bun run build
 mkdir -p .opencode/plugins
 cp dist/index.js .opencode/plugins/timeline.js
@@ -69,6 +71,7 @@ OpenCode loads files from `.opencode/plugins/` at startup.
 Run the standard test suite with Vitest:
 
 ```bash
+cd plugins/timeline
 bun run test
 ```
 
@@ -84,6 +87,12 @@ Before release or plugin packaging changes, inspect the package contents:
 
 ```bash
 npm pack --dry-run --json
+```
+
+Validate the native Grok manifest from the same plugin directory:
+
+```bash
+grok plugin validate .
 ```
 
 ## Code Style

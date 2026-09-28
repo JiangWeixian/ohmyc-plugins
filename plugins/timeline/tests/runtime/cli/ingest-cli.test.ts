@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import {
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   rmSync,
@@ -8,6 +9,7 @@ import {
 } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 
 import { closeDatabase, openDatabase } from '@ohmyc/timeline'
 import {
@@ -42,9 +44,9 @@ describe('dist/ingest.mjs (node entry)', () => {
     rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  function run(args: string[], stdin?: string) {
+  function run(args: string[], stdin?: string, env: NodeJS.ProcessEnv = {}) {
     return spawnSync('node', [INGEST_MJS, ...args], {
-      env: { ...process.env, OHMYC_HOME: dbDir },
+      env: { ...process.env, OHMYC_HOME: dbDir, ...env },
       input: stdin,
       encoding: 'utf8',
     })
@@ -137,12 +139,12 @@ describe('dist/ingest.mjs (node entry)', () => {
       endedAt: 1_714_478_405_000,
       durationMs: 5000,
       turns: 1,
-      tokensInput: 5,
-      tokensOutput: 3,
-      tokensCached: 0,
+      tokensInput: 100,
+      tokensOutput: 50,
+      tokensCached: 9,
       summary: 'hello',
       summarySource: 'first_message',
-      transcriptPath: '/dev/null',
+      transcriptPath,
       fileSize: 0,
       tools: [],
       skills: [],
@@ -160,6 +162,120 @@ describe('dist/ingest.mjs (node entry)', () => {
 
     expect(row?.session_id).toBe('session-bbb')
     expect(row?.project).toBe('demo')
+    expect(readDb(db => db.prepare(
+      'SELECT tokens_input, tokens_output, tokens_cached FROM sessions WHERE session_id = ?',
+    ).get('session-bbb'))).toEqual({ tokens_input: 5, tokens_output: 3, tokens_cached: 0 })
+    expect(run(['--raw'], JSON.stringify(parsed)).status).toBe(0)
+    expect(readDb(db => db.prepare('SELECT COUNT(*) AS n, SUM(tokens_input+tokens_output+tokens_cached) AS total FROM token_usage_events').get())).toEqual({ n: 1, total: 8 })
+  })
+
+  it('ingests a Cursor hook from stdin', () => {
+    const result = run(['--hook', 'cursor'], JSON.stringify({
+      hook_event_name: 'postToolUse',
+      conversation_id: 'c1',
+      generation_id: 't1',
+      tool_use_id: 'call1',
+      tool_name: 'Shell',
+      workspace_roots: ['/tmp/demo'],
+    }))
+
+    expect(result.status).toBe(0)
+    expect(readDb(db => db.prepare(
+      'SELECT agent_name FROM sessions WHERE session_id = ?',
+    ).get('cursor:c1'))).toEqual({ agent_name: 'cursor' })
+  })
+
+  it('replays a hook after database opening fails under a write lock', () => {
+    readDb(() => undefined)
+    const locked = new DatabaseSync(path.join(dbDir, 'timeline.db'))
+    locked.exec('BEGIN IMMEDIATE')
+    try {
+      const result = run(['--hook', 'cursor'], JSON.stringify({
+        hook_event_name: 'postToolUse',
+        conversation_id: 'busy-session',
+        generation_id: 'busy-turn',
+        tool_use_id: 'busy-read',
+        tool_name: 'Read',
+        workspace_roots: ['/tmp/demo'],
+      }))
+      expect(result.status).toBe(0)
+      expect(result.stdout).toBe('')
+      expect(locked.prepare('SELECT count(*) AS count FROM sessions').get()).toEqual({ count: 0 })
+    } finally {
+      locked.exec('ROLLBACK')
+      locked.close()
+    }
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect(run(['--replay-pending']).status).toBe(0)
+      expect(readDb(db => db.prepare(
+        'SELECT session_id, turns FROM sessions',
+      ).all())).toEqual([{ session_id: 'cursor:busy-session', turns: 0 }])
+      expect(readDb(db => db.prepare(
+        'SELECT session_id, tool_name, call_count FROM session_tools',
+      ).all())).toEqual([{ session_id: 'cursor:busy-session', tool_name: 'Read', call_count: 1 }])
+    }
+  })
+
+  it('detects native hook hosts without opening the database', () => {
+    const result = run(['--detect-host'], JSON.stringify({
+      sessionId: 'g1',
+      hookEventName: 'stop',
+    }))
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('grok\n')
+    expect(result.stderr).toBe('')
+    expect(existsSync(path.join(dbDir, 'timeline.db'))).toBe(false)
+  })
+
+  it('prefers native payload evidence over inherited host variables', () => {
+    const result = run(['--detect-host'], JSON.stringify({
+      sessionId: 'g1',
+      hookEventName: 'stop',
+    }), { CURSOR_VERSION: 'fixture' })
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('grok\n')
+  })
+
+  it('deduplicates one native Grok event across native and compatibility loading', () => {
+    const payload = JSON.stringify({
+      sessionId: 'g1',
+      hookEventName: 'post_tool_use',
+      hook_event_name: 'PostToolUse',
+      promptId: 'p1',
+      toolUseId: 'call1',
+      toolName: 'read_file',
+      workspaceRoot: '/tmp/demo',
+    })
+
+    expect(run(['--hook', 'auto'], payload, { CLAUDE_PLUGIN_ROOT: '/compat' }).status).toBe(0)
+    expect(run(['--hook', 'auto'], payload, { GROK_HOME: '/native' }).status).toBe(0)
+    expect(readDb(db => db.prepare(
+      'SELECT call_count FROM session_tools WHERE session_id = ? AND tool_name = ?',
+    ).get('grok:g1', 'read_file'))).toEqual({ call_count: 1 })
+  })
+
+  it('replays pending collector events', () => {
+    const result = run(['--replay-pending'])
+
+    expect(result.status).toBe(0)
+    expect(result.stdout).toBe('')
+  })
+
+  it('rejects multiple write modes', () => {
+    const result = run(['--hook', 'cursor', '--raw'], '{}')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('--hook, --raw, --replay-pending, and disk mode are mutually exclusive')
+  })
+
+  it('rejects invalid hook JSON', () => {
+    const result = run(['--hook', 'cursor'], 'not json')
+
+    expect(result.status).toBe(1)
+    expect(result.stderr).toContain('invalid JSON on stdin')
   })
 
   it('ingests pre-parsed JSON from an installed Codex cache without node_modules', () => {

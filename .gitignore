@@ -4,3 +4,5 @@ node_modules/
 coverage/
 bun.lockb
 .worktrees/
+# Temporary shared runtime pin until the v5 schema package is published.
+!vendor/ohmyc-timeline-usage-v5-*.tgz

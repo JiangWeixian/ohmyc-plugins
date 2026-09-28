@@ -10,10 +10,10 @@
     },
     "plugins/timeline": {
       "name": "@ohmyc/timeline-plugin",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "devDependencies": {
         "@changesets/cli": "^2.27.12",
-        "@ohmyc/timeline": "0.0.0-snapshot-20260614095355",
+        "@ohmyc/timeline": "file:../../vendor/ohmyc-timeline-usage-v5-8b84a5e640bd.tgz",
         "@opencode-ai/plugin": "^1.16.0",
         "@types/node": "^22.13.0",
         "@vitest/coverage-v8": "^3.2.4",
@@ -165,7 +165,7 @@
 
     "@nodelib/fs.walk": ["@nodelib/fs.walk@1.2.8", "", { "dependencies": { "@nodelib/fs.scandir": "2.1.5", "fastq": "^1.6.0" } }, "sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg=="],
 
-    "@ohmyc/timeline": ["@ohmyc/timeline@0.0.0-snapshot-20260614095355", "", {}, "sha512-kxai1Fysv8/eEthO5Nj0pcU3SGIrS/7J1GGYiHvVHrbCXAbxbZyaDHBWmHWsH8oiKaeJouiy4vIKDJRWvKY9Ug=="],
+    "@ohmyc/timeline": ["@ohmyc/timeline@../../vendor/ohmyc-timeline-usage-v5-8b84a5e640bd.tgz", {}, "sha512-E3bfm7mgjc+5AxAiE3v5T2JVk5cAcHiYHPtJ1bGQKMYKpwqNialOt+j4VKfwAOZWiy4HRV1fEeKsOepdf6QgEg=="],
 
     "@ohmyc/timeline-plugin": ["@ohmyc/timeline-plugin@workspace:plugins/timeline"],
 

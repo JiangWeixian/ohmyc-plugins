@@ -1,0 +1,24 @@
+{
+  "name": "ohmyc",
+  "description": "OhMyC official plugin marketplace",
+  "owner": {
+    "name": "JiangWeixian",
+    "email": "jiangweixian1994@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "timeline",
+      "source": {
+        "type": "local",
+        "path": "./plugins/timeline"
+      },
+      "description": "Collect local coding sessions for OhMyC Timeline",
+      "version": "1.0.7",
+      "author": {
+        "name": "JiangWeixian"
+      },
+      "homepage": "https://github.com/JiangWeixian/ohmyc-plugins",
+      "license": "MIT"
+    }
+  ]
+}
