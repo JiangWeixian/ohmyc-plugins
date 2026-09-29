@@ -12,11 +12,12 @@ if (mode === 'crash-reaper') {
   writeFileSync(path.join(directory, 'lock.reclaim'), JSON.stringify({ pid: process.pid, token: 'dead-reaper' }))
   process.exit(0)
 }
+const waitMs = Number(process.env.TIMELINE_LOCK_WAIT_MS || 300)
 const result = await withSessionLock(home, key, async () => {
   const critical = path.join(directory, 'critical')
   closeSync(openSync(critical, 'wx'))
   await delay(40)
   unlinkSync(critical)
   return 'exclusive'
-})
+}, waitMs)
 console.log(JSON.stringify(result))

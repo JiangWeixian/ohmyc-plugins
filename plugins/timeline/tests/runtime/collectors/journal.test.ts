@@ -143,7 +143,9 @@ it('recovers a dead reclamation guard with competing process reapers', async () 
   const key = 'cursor:dead-reaper'
   await run('bun', [lockWorker, root, key, 'crash-reaper'])
   const results = await Promise.all(Array.from({ length: 3 }, async () => {
-    const { stdout } = await run('bun', [lockWorker, root, key, 'acquire'])
+    const { stdout } = await run('bun', [lockWorker, root, key, 'acquire'], {
+      env: { ...process.env, TIMELINE_LOCK_WAIT_MS: '2000' },
+    })
     return JSON.parse(stdout)
   }))
   expect(results).toEqual(Array.from({ length: 3 }, () => ({ acquired: true, value: 'exclusive' })))
