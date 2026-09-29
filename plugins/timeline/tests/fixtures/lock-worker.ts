@@ -15,7 +15,8 @@ if (mode === 'crash-reaper') {
 const result = await withSessionLock(home, key, async () => {
   const critical = path.join(directory, 'critical')
   closeSync(openSync(critical, 'wx'))
-  await delay(40)
+  // Three waiters serialize on this hold, and acquire gives up after 300ms.
+  await delay(5)
   unlinkSync(critical)
   return 'exclusive'
 })
