@@ -1,6 +1,11 @@
 {
   "name": "@ohmyc/timeline-plugin",
   "version": "1.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JiangWeixian/ohmyc-plugins.git",
+    "directory": "plugins/timeline"
+  },
   "type": "module",
   "engines": {
     "node": ">=22"
