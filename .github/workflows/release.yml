@@ -5,6 +5,13 @@ on:
       - main
       - master
       - "releases/*"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Publish this branch to the snapshot dist-tag. This does not publish latest.
+        required: true
+        default: main
+        type: string
 env:
   CI: true
 jobs:
@@ -18,8 +25,15 @@ jobs:
       id-token: write
     steps:
       - name: Checkout code repository
+        if: github.event_name != 'workflow_dispatch'
         uses: actions/checkout@v5
         with:
+          fetch-depth: 0
+      - name: Checkout snapshot branch
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.branch }}
           fetch-depth: 0
       - name: Setup Node.js
         uses: actions/setup-node@v5
@@ -46,11 +60,20 @@ jobs:
           sed -i '/_authToken/d' "$npmrc"
 
       - name: create and publish versions
+        if: github.event_name != 'workflow_dispatch'
         uses: changesets/action@v1
         with:
           version: bun run ci:version
           commit: "chore: update versions"
           title: "chore: update versions"
           publish: bun run ci:publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and publish snapshot versions
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          bun run ci:snapshot
+          bun run ci:prerelease
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
