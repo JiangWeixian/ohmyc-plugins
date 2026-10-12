@@ -182,3 +182,29 @@ it('propagates an action EEXIST without retrying the action', async () => {
   })).rejects.toThrow('action exists')
   expect(calls).toBe(1)
 })
+
+it.each([{ version: 2 }, { agent: 'future-agent' }])('preserves unsupported state without marking it corrupt: %s', async extra => {
+  const root = home()
+  const journal = createJournal(root)
+  const first = event('one')
+  await journal.enqueue(first)
+  const file = path.join(directory(root, 'cursor:c1'), 'state.json')
+  const raw = JSON.stringify({ version: 1, agent: 'cursor', nativeSessionId: 'c1', events: { [first.eventId]: first }, ...extra })
+  writeFileSync(file, raw)
+  await expect(journal.load('cursor:c1')).rejects.toThrow('unsupported')
+  expect(readFileSync(file, 'utf8')).toBe(raw)
+  expect(await journal.pending('cursor:c1')).toEqual([first])
+})
+
+it('leaves unsupported pending events untouched while returning supported captures', async () => {
+  const root = home()
+  const journal = createJournal(root)
+  const first = event('one')
+  const future = { ...event('future'), version: 2 }
+  await journal.enqueue(first)
+  const file = path.join(directory(root, 'cursor:c1'), 'outbox', `${future.eventId}.json`)
+  writeFileSync(file, JSON.stringify(future))
+  expect(await journal.pending('cursor:c1')).toEqual([first])
+  await journal.ack('cursor:c1', [first.eventId])
+  expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual(future)
+})

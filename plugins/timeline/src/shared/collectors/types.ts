@@ -1,12 +1,12 @@
-import type { ParsedSessionData, TokenStatus } from '@ohmyc/timeline/schema'
+import type { ParsedSessionData } from '@ohmyc/timeline/schema'
 
-export type Host = 'cursor' | 'grok'
+export type Host = 'cursor' | 'grok' | 'kimi' | 'zcode'
 
 export type Usage = {
   input: number
   output: number
   cached: number
-  status: Exclude<TokenStatus, 'legacy'>
+  status: Exclude<NonNullable<ParsedSessionData['tokenStatus']>, 'legacy'>
 }
 
 export type CollectorEvent = {

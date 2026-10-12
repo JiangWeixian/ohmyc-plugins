@@ -10,7 +10,7 @@ if command -v node >/dev/null 2>&1; then
 fi
 
 case "$HOST" in
-  cursor|grok)
+  cursor|grok|kimi|zcode)
     "$SCRIPT_DIR/ingest-event.sh" < "$TMP_FILE"
     ;;
   *)

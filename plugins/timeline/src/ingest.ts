@@ -14,6 +14,9 @@ import { parseCursorHook } from './agents/cursor/hooks'
 import { hydrateCursor } from './agents/cursor/transcript'
 import { parseGrokHook } from './agents/grok/hooks'
 import { hydrateGrok } from './agents/grok/session'
+import { parseZcodeHook } from './agents/zcode/hooks'
+import { parseKimiHook } from './agents/kimi/hooks'
+import { hydrateKimi } from './agents/kimi/session'
 import { detectHost } from './shared/collectors/identity'
 import { ingestEvents, replayPending } from './shared/collectors/ingest-event'
 import type { CollectorEvent, Host } from './shared/collectors/types'
@@ -26,9 +29,9 @@ cli
   .option('--transcript-path <path>', 'Path to JSONL transcript (disk-path mode)')
   .option('--agent-name <name>', 'Agent name for disk-path mode', { default: 'claude' })
   .option('--raw', 'Read pre-parsed ParsedSessionData JSON from stdin')
-  .option('--hook <host>', 'Read native cursor, grok, or auto hook JSON from stdin')
+  .option('--hook <host>', 'Read native cursor, grok, kimi, zcode, or auto hook JSON from stdin')
   .option('--replay-pending', 'Replay durable collector events')
-  .option('--detect-host', 'Print cursor, grok, or legacy for hook JSON on stdin')
+  .option('--detect-host', 'Print cursor, grok, kimi, zcode, or legacy for hook JSON on stdin')
   .action(async (options: {
     sessionId?: string
     transcriptPath?: string
@@ -139,11 +142,14 @@ function hydrate(events: readonly CollectorEvent[]): Promise<readonly CollectorE
   const agent = events[0]?.agent
   if (agent === 'cursor') return hydrateCursor(events)
   if (agent === 'grok') return hydrateGrok(events, grokHome())
+  if (agent === 'kimi') return hydrateKimi(events, process.env.KIMI_CODE_HOME ?? path.join(os.homedir(), '.kimi-code'))
   return Promise.resolve([])
 }
 
-function parseHook(host: Host, input: unknown): CollectorEvent[] {
+async function parseHook(host: Host, input: unknown): Promise<CollectorEvent[]> {
   const observedAt = Date.now()
+  if (host === 'zcode') return parseZcodeHook(input, observedAt)
+  if (host === 'kimi') return parseKimiHook(input, observedAt)
   return host === 'cursor'
     ? parseCursorHook(input, observedAt)
     : parseGrokHook(input, observedAt)
@@ -166,15 +172,15 @@ async function withCollectorWriter(
 }
 
 async function runHookMode(requestedHost: string): Promise<void> {
-  if (!['cursor', 'grok', 'auto'].includes(requestedHost)) {
-    fail('--hook must be cursor, grok, or auto')
+  if (!['cursor', 'grok', 'kimi', 'zcode', 'auto'].includes(requestedHost)) {
+    fail('--hook must be cursor, grok, kimi, zcode, or auto')
   }
   const input = await readJsonStdin('--hook')
   const host = requestedHost === 'auto'
     ? detectHost(input, process.env)
     : requestedHost as Host
   if (!host) fail('unable to detect native hook host')
-  const events = parseHook(host, input)
+  const events = await parseHook(host, input)
   if (events.length === 0) fail(`invalid ${host} hook payload`)
   await withCollectorWriter(async write => {
     await ingestEvents(events, { home: collectorHome(), hydrate, write })

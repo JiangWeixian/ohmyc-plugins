@@ -1,0 +1,57 @@
+{
+  "name": "timeline",
+  "version": "1.1.0",
+  "description": "Collect local Kimi Code sessions for OhMyC Timeline",
+  "hooks": [
+    {
+      "event": "SessionStart",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "TurnStarted",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "PostToolUse",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "PostToolUseFailure",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "Stop",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "StopFailure",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "Interrupt",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "SubagentStop",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "PostCompact",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    },
+    {
+      "event": "SessionEnd",
+      "command": "sh ./hooks/kimi/ingest.sh",
+      "timeout": 3
+    }
+  ]
+}

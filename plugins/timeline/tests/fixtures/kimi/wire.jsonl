@@ -1,0 +1,10 @@
+{"type":"metadata","protocol_version":"1.5","created_at":1791421200000}
+{"type":"config.update","agentId":"main","model":"kimi-test","time":1791421200000}
+{"type":"turn.prompt","agentId":"main","turnId":0,"input":[{"type":"text","text":"hello"}],"origin":{"kind":"user"},"time":1791421201000}
+{"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.call","toolCallId":"read1","name":"Read","args":{"path":"/tmp/demo/skills/lint/SKILL.md"},"turnId":0},"time":1791421202000}
+{"type":"context.append_loop_event","agentId":"main","event":{"type":"tool.result","toolCallId":"read1","result":{"output":"1\t# lint"},"turnId":0},"time":1791421202001}
+{"type":"usage.record","agentId":"main","model":"kimi-test","usage":{"inputOther":100,"inputCacheRead":20,"inputCacheCreation":5,"output":10},"usageScope":"turn","time":1791421203000}
+{"type":"context.append_loop_event","agentId":"main","event":{"type":"step.end","usage":{"inputOther":100,"inputCacheRead":20,"inputCacheCreation":5,"output":10}},"time":1791421203001}
+{"type":"turn.prompt","agentId":"main","turnId":1,"input":[{"type":"text","text":"background"}],"origin":{"kind":"task"},"time":1791421204000}
+{"type":"turn.prompt","agentId":"main","turnId":2,"input":[{"type":"text","text":"again"}],"origin":{"kind":"user"},"time":1791421205000}
+{"type":"usage.record","agentId":"main","model":"kimi-test","usage":{"inputOther":25,"inputCacheRead":0,"inputCacheCreation":0,"output":5},"usageScope":"turn","time":1791421206000}

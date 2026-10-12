@@ -1,0 +1,171 @@
+[
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "SessionStart",
+      "mode": "yolo",
+      "model": "test/glm-test",
+      "sessionId": "sess_native",
+      "source": "startup",
+      "timestamp": "2026-10-08T02:50:19.670Z",
+      "traceId": "trace_native_1",
+      "turnId": "turn_native_1",
+      "hook_event_name": "SessionStart",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl"
+    },
+    "transcript": ""
+  },
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "UserPromptSubmit",
+      "mode": "yolo",
+      "prompt": "Read skills/check/SKILL.md and reply briefly.",
+      "sessionId": "sess_native",
+      "timestamp": "2026-10-08T02:50:19.865Z",
+      "traceId": "trace_native_1",
+      "turnId": "turn_native_1",
+      "hook_event_name": "UserPromptSubmit",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl"
+    },
+    "transcript": "{\"message\":{\"content\":[{\"text\":\"Read skills/check/SKILL.md and reply briefly.\",\"type\":\"text\"}],\"role\":\"user\"}}\n"
+  },
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "PostToolUse",
+      "mode": "yolo",
+      "sessionId": "sess_native",
+      "timestamp": "2026-10-08T02:50:20.133Z",
+      "toolCallId": "native_read_1",
+      "toolInput": {
+        "file_path": "/tmp/demo/skills/check/SKILL.md"
+      },
+      "toolName": "Read",
+      "toolResponse": {
+        "type": "text",
+        "filePath": "/tmp/demo/skills/check/SKILL.md",
+        "content": "---\nname: check\ndescription: local native test\n---\nLocal verification fixture.\n",
+        "numLines": 6,
+        "startLine": 1,
+        "totalLines": 6,
+        "sizeBytes": 79,
+        "bytesRead": 79,
+        "truncated": false
+      },
+      "toolResultPreview": "{\"type\":\"text\",\"filePath\":\"/tmp/demo/skills/check/SKILL.md\",\"content\":\"---\\nname: check\\ndescription: local native test\\n---\\nLocal verification fixture.\\n\",\"numLines\":6,\"startLine\":1,\"totalLines\":6,\"sizeBytes\":79,\"bytesRead\":79,\"truncated\":false}",
+      "traceId": "trace_native_1",
+      "turnId": "turn_native_1",
+      "hook_event_name": "PostToolUse",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl",
+      "tool_name": "Read",
+      "tool_input": {
+        "file_path": "/tmp/demo/skills/check/SKILL.md"
+      },
+      "tool_use_id": "native_read_1",
+      "tool_response": {
+        "type": "text",
+        "filePath": "/tmp/demo/skills/check/SKILL.md",
+        "content": "---\nname: check\ndescription: local native test\n---\nLocal verification fixture.\n",
+        "numLines": 6,
+        "startLine": 1,
+        "totalLines": 6,
+        "sizeBytes": 79,
+        "bytesRead": 79,
+        "truncated": false
+      }
+    },
+    "transcript": ""
+  },
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "Stop",
+      "mode": "yolo",
+      "responsePreview": "Native test completed.",
+      "responseText": "Native test completed.",
+      "sessionId": "sess_native",
+      "stopHookActive": false,
+      "timestamp": "2026-10-08T02:50:20.329Z",
+      "toolCallCount": 1,
+      "traceId": "trace_native_1",
+      "turnId": "turn_native_1",
+      "hook_event_name": "Stop",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl",
+      "last_assistant_message": "Native test completed.",
+      "stop_hook_active": false
+    },
+    "transcript": "{\"message\":{\"content\":[{\"text\":\"Native test completed.\",\"type\":\"text\"}],\"role\":\"assistant\"}}\n"
+  },
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "SessionStart",
+      "mode": "yolo",
+      "model": "test/glm-test",
+      "sessionId": "sess_native",
+      "source": "resume",
+      "timestamp": "2026-10-08T02:50:55.565Z",
+      "traceId": "trace_native_2",
+      "hook_event_name": "SessionStart",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl"
+    },
+    "transcript": ""
+  },
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "UserPromptSubmit",
+      "mode": "yolo",
+      "prompt": "Reply briefly in the resumed session.",
+      "sessionId": "sess_native",
+      "timestamp": "2026-10-08T02:50:55.760Z",
+      "traceId": "trace_native_2",
+      "turnId": "turn_native_2",
+      "hook_event_name": "UserPromptSubmit",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl"
+    },
+    "transcript": "{\"message\":{\"content\":[{\"text\":\"Reply briefly in the resumed session.\",\"type\":\"text\"}],\"role\":\"user\"}}\n"
+  },
+  {
+    "input": {
+      "cwd": "/tmp/demo",
+      "hookEventName": "Stop",
+      "mode": "yolo",
+      "responsePreview": "Native test completed.",
+      "responseText": "Native test completed.",
+      "sessionId": "sess_native",
+      "stopHookActive": false,
+      "timestamp": "2026-10-08T02:50:56.502Z",
+      "toolCallCount": 0,
+      "traceId": "trace_native_2",
+      "turnId": "turn_native_2",
+      "hook_event_name": "Stop",
+      "permission_mode": "yolo",
+      "session_id": "sess_native",
+      "transcript_path": "/tmp/zcode-hook/transcript.jsonl",
+      "transcriptPath": "/tmp/zcode-hook/transcript.jsonl",
+      "last_assistant_message": "Native test completed.",
+      "stop_hook_active": false
+    },
+    "transcript": "{\"message\":{\"content\":[{\"text\":\"Native test completed.\",\"type\":\"text\"}],\"role\":\"assistant\"}}\n"
+  }
+]

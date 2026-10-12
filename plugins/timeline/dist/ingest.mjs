@@ -412,14 +412,14 @@ function parseCodexTranscript(sessionId, transcriptPath) {
       continue;
     }
     if (payload.type === "message" && payload.role === "user") {
-      const text4 = extractCodexMessageText(payload.content);
-      if (text4) {
-        for (const skillName of extractCodexSkillNames(text4)) {
+      const text6 = extractCodexMessageText(payload.content);
+      if (text6) {
+        for (const skillName of extractCodexSkillNames(text6)) {
           skills.add(skillName);
         }
-        if (!isCodexSkillInjection(text4)) {
+        if (!isCodexSkillInjection(text6)) {
           turns++;
-          firstUserMessage ??= text4;
+          firstUserMessage ??= text6;
         }
       }
     }
@@ -492,8 +492,8 @@ function hasCodexTokenFields(value) {
   return "input_tokens" in value || "output_tokens" in value || "cached_input_tokens" in value;
 }
 function numberValue(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+  const number2 = Number(value);
+  return Number.isFinite(number2) ? number2 : null;
 }
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -505,7 +505,7 @@ function extractCodexMessageText(content) {
   if (!Array.isArray(content)) {
     return null;
   }
-  const text4 = content.map((part) => {
+  const text6 = content.map((part) => {
     if (!part || typeof part !== "object") {
       return "";
     }
@@ -515,13 +515,13 @@ function extractCodexMessageText(content) {
     }
     return "";
   }).filter(Boolean).join("\n").trim();
-  return text4 || null;
+  return text6 || null;
 }
-function extractCodexSkillNames(text4) {
-  return [...text4.matchAll(/<skill\b[^>]*>[\s\S]*?<name>([^<]+)<\/name>[\s\S]*?<\/skill>/g)].map((match) => match[1]?.trim()).filter(Boolean);
+function extractCodexSkillNames(text6) {
+  return [...text6.matchAll(/<skill\b[^>]*>[\s\S]*?<name>([^<]+)<\/name>[\s\S]*?<\/skill>/g)].map((match) => match[1]?.trim()).filter(Boolean);
 }
-function isCodexSkillInjection(text4) {
-  const trimmed = text4.trim();
+function isCodexSkillInjection(text6) {
+  const trimmed = text6.trim();
   return trimmed.startsWith("<skill>") && trimmed.endsWith("</skill>") && extractCodexSkillNames(trimmed).length > 0;
 }
 function extractCodexSkillNameFromCommandArguments(argumentsValue) {
@@ -1014,8 +1014,8 @@ var Command = class {
     this.args = findAllBrackets(rawName);
     this.examples = [];
   }
-  usage(text4) {
-    this.usageText = text4;
+  usage(text6) {
+    this.usageText = text6;
     return this;
   }
   allowUnknownOptions() {
@@ -1179,8 +1179,8 @@ var CAC = class extends EventEmitter {
     this.globalCommand = new GlobalCommand(this);
     this.globalCommand.usage("<command> [options]");
   }
-  usage(text4) {
-    this.globalCommand.usage(text4);
+  usage(text6) {
+    this.globalCommand.usage(text6);
     return this;
   }
   command(rawName, description, config) {
@@ -1359,7 +1359,7 @@ var cac = (name = "") => new CAC(name);
 
 // src/ingest.ts
 import os3 from "os";
-import path8 from "path";
+import path10 from "path";
 
 // src/shared/collectors/skill.ts
 import path3 from "path";
@@ -1420,14 +1420,21 @@ function eventKey(event3) {
 }
 function detectHost(input, env) {
   const payload = fields(input);
+  if (hasText(env.ZCODE_SESSION_ID) && hasText(payload.sessionId) && hasText(payload.hookEventName)) {
+    return env.ZCODE_SESSION_ID === payload.sessionId && payload.session_id === payload.sessionId && payload.hook_event_name === payload.hookEventName && !hasText(payload.conversation_id) && payload.client_type !== "kimi_code_cli" ? "zcode" : null;
+  }
   const nativeGrok = hasText(payload.sessionId) && hasText(payload.hookEventName);
   const nativeCursor = hasText(payload.conversation_id) && (hasText(payload.hook_event_name) || hasText(payload.cursor_version));
-  if (nativeGrok && nativeCursor) {
-    console.warn("[timeline] conflicting native host evidence: grok,cursor");
+  const nativeKimi = payload.client_type === "kimi_code_cli" && hasText(payload.session_id) && hasText(payload.hook_event_name);
+  const candidates = [];
+  if (nativeGrok) candidates.push("grok");
+  if (nativeCursor) candidates.push("cursor");
+  if (nativeKimi) candidates.push("kimi");
+  if (candidates.length > 1) {
+    console.warn(`[timeline] conflicting native host evidence: ${candidates.join(",")}`);
     return null;
   }
-  if (nativeGrok) return "grok";
-  if (nativeCursor) return "cursor";
+  if (candidates.length === 1) return candidates[0];
   if (hasText(env.GROK_SESSION_ID) || hasText(env.GROK_HOOK_EVENT)) return "grok";
   if (hasText(payload.conversation_id) && hasText(env.CURSOR_VERSION)) return "cursor";
   return null;
@@ -2117,235 +2124,352 @@ async function hydrateGrok(events, grokHome2) {
   return output;
 }
 
-// src/shared/collectors/journal.ts
-import { createHash as createHash3, randomUUID } from "crypto";
-import { link, mkdir, open, readdir as readdir2, readFile as readFile3, rename, unlink } from "fs/promises";
-import path6 from "path";
-var HEX_HASH = /^[a-f0-9]{64}$/;
-function collectorDirectory(home, key) {
-  const hash = createHash3("sha256").update(key).digest("hex");
-  return path6.join(home, "collectors", hash);
+// src/agents/zcode/hooks.ts
+import { readFile as readFile3 } from "fs/promises";
+function object8(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
-async function ensureDirectory(home, key) {
-  const directory = collectorDirectory(home, key);
-  await mkdir(path6.join(directory, "outbox"), { recursive: true, mode: 448 });
-  return directory;
+function text4(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
 }
-async function durableWrite(filePath, value) {
-  const tempPath = path6.join(path6.dirname(filePath), `.tmp-${randomUUID()}`);
-  const file = await open(tempPath, "wx", 384);
+async function transcriptPrompt(file) {
+  if (!file) return void 0;
   try {
-    await file.writeFile(JSON.stringify(value));
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  try {
-    await rename(tempPath, filePath);
-  } finally {
-    await unlink(tempPath).catch((error) => {
-      if (error.code !== "ENOENT") throw error;
-    });
-  }
-}
-async function writeOnce(filePath, value) {
-  const tempPath = path6.join(path6.dirname(filePath), `.tmp-${randomUUID()}`);
-  const file = await open(tempPath, "wx", 384);
-  try {
-    await file.writeFile(JSON.stringify(value));
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  try {
-    await link(tempPath, filePath);
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  } finally {
-    await unlink(tempPath);
-  }
-}
-var CorruptCollectorStateError = class extends Error {
-  constructor(corruptPath) {
-    super(`corrupt collector state moved to ${corruptPath}; host hydration required`);
-    this.corruptPath = corruptPath;
-  }
-  corruptPath;
-};
-function createJournal(home) {
-  return {
-    async enqueue(event3) {
-      if (!HEX_HASH.test(event3.eventId)) throw new Error("invalid collector event id");
-      const key = sessionKey(event3.agent, event3.nativeSessionId);
-      const directory = await ensureDirectory(home, key);
-      await writeOnce(path6.join(directory, "identity.json"), { key });
-      await writeOnce(path6.join(directory, "outbox", `${event3.eventId}.json`), event3);
-    },
-    async pending(key) {
-      const outbox = path6.join(collectorDirectory(home, key), "outbox");
-      let names;
-      try {
-        names = await readdir2(outbox);
-      } catch (error) {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      }
-      const events = [];
-      for (const name of names.filter((name2) => HEX_HASH.test(name2.slice(0, -5)) && name2.endsWith(".json")).sort()) {
-        try {
-          events.push(JSON.parse(await readFile3(path6.join(outbox, name), "utf8")));
-        } catch (error) {
-          console.warn(`[timeline] unreadable outbox event ${name}: ${String(error)}`);
-        }
-      }
-      return events;
-    },
-    async load(key) {
-      const statePath = path6.join(collectorDirectory(home, key), "state.json");
-      try {
-        const state = JSON.parse(await readFile3(statePath, "utf8"));
-        if (state.version !== 1 || state.agent !== "cursor" && state.agent !== "grok" || typeof state.nativeSessionId !== "string" || !state.events || typeof state.events !== "object" || sessionKey(state.agent, state.nativeSessionId) !== key) {
-          throw new Error("invalid collector state");
-        }
-        return state;
-      } catch (error) {
-        if (error.code === "ENOENT") {
-          const names = await readdir2(path6.dirname(statePath)).catch(() => []);
-          const corrupt = names.find((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
-          if (corrupt) throw new CorruptCollectorStateError(path6.join(path6.dirname(statePath), corrupt));
-          return null;
-        }
-        const corruptPath = `${statePath}.${Date.now()}-${randomUUID()}.corrupt`;
-        await rename(statePath, corruptPath).catch(() => void 0);
-        throw new CorruptCollectorStateError(corruptPath);
-      }
-    },
-    async save(key, state) {
-      const directory = await ensureDirectory(home, key);
-      await durableWrite(path6.join(directory, "state.json"), state);
-    },
-    async ack(key, eventIds) {
-      const outbox = path6.join(collectorDirectory(home, key), "outbox");
-      await Promise.all(eventIds.filter((id) => HEX_HASH.test(id)).map(async (id) => {
-        await unlink(path6.join(outbox, `${id}.json`)).catch((error) => {
-          if (error.code !== "ENOENT") throw error;
-        });
-      }));
-    },
-    async keys() {
-      const root = path6.join(home, "collectors");
-      let directories;
-      try {
-        directories = await readdir2(root);
-      } catch (error) {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      }
-      const keys = [];
-      for (const directory of directories) {
-        const base = path6.join(root, directory);
-        try {
-          const identity = JSON.parse(await readFile3(path6.join(base, "identity.json"), "utf8"));
-          if (typeof identity.key !== "string") continue;
-          if ((await this.pending(identity.key)).length > 0) keys.push(identity.key);
-        } catch (error) {
-          console.warn(`[timeline] unreadable collector identity ${directory}: ${String(error)}`);
-        }
-      }
-      return keys.sort();
+    const raw = await readFile3(file, "utf8");
+    for (const line of raw.split("\n")) {
+      if (!line.trim()) continue;
+      const message = object8(object8(JSON.parse(line))?.message);
+      if (message?.role !== "user" || !Array.isArray(message.content)) continue;
+      const prompt = message.content.map((block) => {
+        const data = object8(block);
+        return data?.type === "text" ? text4(data.text) ?? "" : "";
+      }).join("\n");
+      if (prompt.trim()) return prompt;
     }
+  } catch {
+    return void 0;
+  }
+  return void 0;
+}
+async function parseZcodeHook(input, observedAt) {
+  const data = object8(input);
+  const id = text4(data?.sessionId);
+  const hook = text4(data?.hookEventName);
+  if (!data || !id || !hook || !Number.isFinite(observedAt) || data.session_id !== void 0 && data.session_id !== id || data.hook_event_name !== void 0 && data.hook_event_name !== hook) return [];
+  const nativeTime = typeof data.timestamp === "string" ? Date.parse(data.timestamp) : NaN;
+  const base = {
+    version: 1,
+    agent: "zcode",
+    nativeSessionId: id,
+    project: text4(data.cwd),
+    ...Number.isFinite(nativeTime) ? { sourceAt: nativeTime } : {}
   };
+  const makeEvent = (facts) => {
+    const semantic = { ...base, ...facts };
+    return { ...semantic, eventId: eventKey(semantic), observedAt };
+  };
+  if (hook === "SessionStart") {
+    return [makeEvent({ model: text4(data.model), rootSession: true })];
+  }
+  const turnId3 = text4(data.turnId);
+  if (!turnId3) return [];
+  if (hook === "UserPromptSubmit") {
+    const prompt = text4(data.prompt) ?? await transcriptPrompt(text4(data.transcriptPath) ?? text4(data.transcript_path));
+    return prompt ? [makeEvent({ turnId: turnId3, prompt: prompt.slice(0, 140) })] : [];
+  }
+  if (hook === "Stop") return [makeEvent({ turnId: turnId3, confirmsTurn: true })];
+  if (hook !== "PostToolUse" && hook !== "PostToolUseFailure") return [];
+  const toolId = text4(data.toolCallId);
+  const name = text4(data.toolName);
+  if (!toolId || !name) return [];
+  let skill;
+  if (hook === "PostToolUse" && data.error === void 0 && data.toolResponse !== void 0) {
+    const args = object8(data.toolInput);
+    if (name === "Skill") skill = text4(args?.skill);
+    const requested = text4(args?.file_path);
+    const cwd = text4(data.cwd);
+    if (name === "Read") skill = skillFromReadPaths(requested, object8(data.toolResponse)?.filePath, cwd);
+  }
+  return [
+    makeEvent({ turnId: turnId3, confirmsTurn: true }),
+    makeEvent({ tool: { id: toolId, name, ...skill ? { skill } : {} } })
+  ];
 }
 
-// src/shared/collectors/lock.ts
-import { createHash as createHash4, randomUUID as randomUUID2 } from "crypto";
-import { mkdir as mkdir2, open as open2, readFile as readFile4, unlink as unlink2 } from "fs/promises";
-import path7 from "path";
-import { setTimeout as delay } from "timers/promises";
-function lockPath(home, key) {
-  return path7.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
+// src/agents/kimi/hooks.ts
+import path6 from "path";
+function object9(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
-async function readLock(filePath) {
+function text5(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function turnId2(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? String(value) : void 0;
+}
+function kimiEvent(id, observedAt, facts, identity = {}) {
+  const semantic = { version: 1, agent: "kimi", nativeSessionId: id, ...facts };
+  return { ...semantic, eventId: eventKey({ ...semantic, ...identity }), observedAt };
+}
+function kimiSkill(name, input, succeeded, cwd) {
+  if (!succeeded) return void 0;
+  const args = object9(input);
+  if (name === "Skill") return text5(args?.skill);
+  const requested = text5(args?.path);
+  if (name !== "Read" || !requested || !path6.isAbsolute(requested) && !cwd) return void 0;
+  return skillFromReadPaths(requested, path6.resolve(cwd ?? "/", requested), cwd);
+}
+function parseKimiHook(input, observedAt) {
+  const data = object9(input);
+  const id = text5(data?.session_id);
+  const hook = text5(data?.hook_event_name);
+  if (!data || !id || !hook || data.client_type !== "kimi_code_cli" || !Number.isFinite(observedAt)) return [];
+  const base = { project: text5(data.cwd), title: text5(data.session_title) };
+  if (hook === "TurnStarted") {
+    const nativeTurn = turnId2(data.turn_id);
+    const prompt = text5(data.prompt);
+    if (data.origin_kind !== "user" || nativeTurn === void 0 || !prompt) return [];
+    return [kimiEvent(id, observedAt, { ...base, turnId: nativeTurn, prompt: prompt.slice(0, 140), confirmsTurn: true }, { hook, fullPrompt: prompt })];
+  }
+  if (hook === "PostToolUse" || hook === "PostToolUseFailure") {
+    const toolId = text5(data.tool_call_id);
+    const name = text5(data.tool_name);
+    if (!toolId || !name) return [];
+    const skill = kimiSkill(name, data.tool_input, hook === "PostToolUse" && data.error === void 0 && text5(data.tool_output) !== void 0, text5(data.cwd));
+    return [kimiEvent(id, observedAt, { ...base, tool: { id: toolId, name, ...skill ? { skill } : {} } }, { hook: "tool" })];
+  }
+  if (hook === "SessionStart") {
+    return [kimiEvent(id, observedAt, { ...base, model: text5(data.model), rootSession: true, needsHydration: true }, { hook, source: text5(data.source) })];
+  }
+  if (["Stop", "StopFailure", "Interrupt", "SessionEnd", "SubagentStop", "PostCompact"].includes(hook)) {
+    return [kimiEvent(id, observedAt, { ...base, needsHydration: true }, { hook, nativeTurn: turnId2(data.turn_id), reason: text5(data.reason) })];
+  }
+  return [];
+}
+
+// src/agents/kimi/session.ts
+import { readFile as readFile4, realpath, stat as stat3 } from "fs/promises";
+import path7 from "path";
+function time(value) {
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return value;
+  if (typeof value !== "string") return void 0;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : void 0;
+}
+function parseKimiWire(raw, id, observedAt, cwd, since) {
+  const records = [];
+  let partial = false;
+  for (const source of raw.split("\n")) {
+    if (!source.trim()) continue;
+    try {
+      const data = object9(JSON.parse(source));
+      if (!data) partial = true;
+      else records.push(data);
+    } catch {
+      partial = true;
+    }
+  }
+  const metadata = records[0];
+  if (metadata?.type !== "metadata" || !["1.0", "1.1", "1.2", "1.3", "1.4", "1.5"].includes(String(metadata.protocol_version))) return [];
+  const events = [kimiEvent(id, observedAt, { sourceAt: since ?? time(metadata.created_at), rootSession: true })];
+  const calls = /* @__PURE__ */ new Map();
+  let project2 = cwd;
+  let model;
+  let lastAt = since ?? time(metadata.created_at) ?? observedAt;
+  let input = 0;
+  let cached = 0;
+  let output = 0;
+  let usages = 0;
+  for (const data of records.slice(1)) {
+    if (data.agentId !== void 0 && data.agentId !== "main") continue;
+    const sourceAt = time(data.time);
+    lastAt = Math.max(lastAt, sourceAt ?? 0);
+    if (data.type === "config.update") {
+      project2 = text5(data.cwd) ?? project2;
+      model = text5(data.model) ?? model;
+    }
+    if (since !== void 0 && data.type !== "config.update" && (sourceAt === void 0 || sourceAt < since)) continue;
+    if (data.type === "turn.prompt") {
+      const nativeTurn = turnId2(data.turnId);
+      const origin = object9(data.origin);
+      const prompt = Array.isArray(data.input) ? data.input.map((part) => {
+        const value = object9(part);
+        return value?.type === "text" ? text5(value.text) ?? "" : "";
+      }).join("") : "";
+      if (origin?.kind === "user" && nativeTurn !== void 0 && prompt.trim()) {
+        events.push(kimiEvent(id, observedAt, { sourceAt, turnId: nativeTurn, prompt: prompt.slice(0, 140), confirmsTurn: true }, { fullPrompt: prompt }));
+      }
+    }
+    if (data.type === "context.append_loop_event") {
+      const native = object9(data.event);
+      const callId = text5(native?.toolCallId);
+      const name = text5(native?.name);
+      if (native?.type === "tool.call" && callId && name) calls.set(callId, { name, args: native.args });
+      if (native?.type === "tool.result" && callId) {
+        const call = calls.get(callId);
+        const result = object9(native.result);
+        if (call && result) {
+          const skill = kimiSkill(call.name, call.args, result.isError !== true && result.truncated !== true, project2);
+          events.push(kimiEvent(id, observedAt, { sourceAt, tool: { id: callId, name: call.name, ...skill ? { skill } : {} } }));
+        }
+      }
+    }
+    if (data.type === "usage.record") {
+      const usage = object9(data.usage);
+      const values = [usage?.inputOther, usage?.inputCacheCreation, usage?.inputCacheRead, usage?.output];
+      if (!values.every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
+        partial = true;
+        continue;
+      }
+      input += usage.inputOther + usage.inputCacheCreation;
+      cached += usage.inputCacheRead;
+      output += usage.output;
+      usages += 1;
+      model = text5(data.model) ?? model;
+    }
+  }
+  events.push(kimiEvent(id, observedAt, {
+    sourceAt: lastAt,
+    project: project2,
+    model,
+    usage: usages > 0 ? { input, cached, output, status: partial ? "partial" : "complete" } : void 0
+  }));
+  return events;
+}
+async function stableRead2(file) {
   try {
-    const value = JSON.parse(await readFile4(filePath, "utf8"));
-    return Number.isInteger(value.pid) && value.pid > 0 && typeof value.token === "string" ? value : null;
+    const before = await stat3(file);
+    if (!before.isFile()) return null;
+    const raw = await readFile4(file, "utf8");
+    const after = await stat3(file);
+    return before.size === after.size && before.mtimeMs === after.mtimeMs ? { raw, size: after.size, mtimeMs: after.mtimeMs } : null;
   } catch {
     return null;
   }
 }
-function isDead(pid) {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return error.code === "ESRCH";
-  }
+function inside(root, candidate) {
+  const relative = path7.relative(root, candidate);
+  return relative !== "" && relative !== ".." && !relative.startsWith(`..${path7.sep}`) && !path7.isAbsolute(relative);
 }
-async function releaseLock(filePath, token) {
-  const current = await readLock(filePath);
-  if (current?.token === token && current.pid === process.pid) {
-    await unlink2(filePath).catch((error) => {
-      if (error.code !== "ENOENT") throw error;
-    });
-  }
-}
-async function acquireLock(filePath, deadline, depth = 0) {
-  if (depth > 16) return null;
-  const token = randomUUID2();
-  while (true) {
-    let file;
+async function hydrateKimi(events, home) {
+  const id = events[0]?.nativeSessionId;
+  if (!id || !events.some((event3) => event3.needsHydration)) return [];
+  const index = await stableRead2(path7.join(home, "session_index.jsonl"));
+  if (!index) return [];
+  let entry;
+  for (const line of index.raw.split("\n")) {
     try {
-      file = await open2(filePath, "wx", 384);
-    } catch (error) {
-      if (error.code !== "EEXIST") throw error;
+      const value = object9(JSON.parse(line));
+      if (value?.sessionId === id) entry = value;
+    } catch {
     }
-    if (file) {
-      try {
-        await file.writeFile(JSON.stringify({ pid: process.pid, token }));
-        await file.sync();
-      } finally {
-        await file.close();
-      }
-      const current = await readLock(filePath);
-      return current?.token === token && current.pid === process.pid ? token : null;
-    }
-    const existing = await readLock(filePath);
-    if (!existing) {
-      console.warn(`[timeline] preserving malformed session lock ${filePath}`);
-      return null;
-    }
-    if (isDead(existing.pid)) {
-      const guardPath = `${filePath}.reclaim`;
-      const guardToken = await acquireLock(guardPath, deadline, depth + 1);
-      if (guardToken) {
-        try {
-          const guard = await readLock(guardPath);
-          const current = await readLock(filePath);
-          if (guard?.token === guardToken && guard.pid === process.pid && current?.token === existing.token && current.pid === existing.pid && isDead(current.pid)) {
-            await unlink2(filePath).catch((error) => {
-              if (error.code !== "ENOENT") throw error;
-            });
-          }
-        } finally {
-          await releaseLock(guardPath, guardToken);
-        }
-        continue;
-      }
-    }
-    if (Date.now() >= deadline) return null;
-    await delay(20);
   }
-}
-async function withSessionLock(home, key, action) {
-  const filePath = lockPath(home, key);
-  await mkdir2(path7.dirname(filePath), { recursive: true, mode: 448 });
-  const token = await acquireLock(filePath, Date.now() + 300);
-  if (!token) return { acquired: false };
+  const directory = text5(entry?.sessionDir);
+  if (!directory || !path7.isAbsolute(directory) || path7.basename(directory) !== id) return [];
+  const sessionsRoot = await realpath(path7.join(home, "sessions")).catch(() => "");
+  const actualDirectory = await realpath(directory).catch(() => "");
+  if (!sessionsRoot || !actualDirectory || !inside(sessionsRoot, actualDirectory)) return [];
+  const wirePath = path7.join(actualDirectory, "agents/main/wire.jsonl");
+  const statePath = path7.join(actualDirectory, "state.json");
+  const actualWire = await realpath(wirePath).catch(() => "");
+  const actualState = await realpath(statePath).catch(() => "");
+  if (!inside(actualDirectory, actualWire) || !inside(actualDirectory, actualState)) return [];
+  const [wire, state] = await Promise.all([stableRead2(actualWire), stableRead2(actualState)]);
+  if (!wire || !state) return [];
+  let metadata;
   try {
-    return { acquired: true, value: await action() };
-  } finally {
-    await releaseLock(filePath, token);
+    metadata = object9(JSON.parse(state.raw));
+  } catch {
+    return [];
   }
+  if (!metadata) return [];
+  if (metadata.id !== void 0 && metadata.id !== id) return [];
+  const since = metadata.forkedFrom ? time(metadata.createdAt) : void 0;
+  if (metadata.forkedFrom && since === void 0) return [];
+  const observedAt = Math.max(...events.map((event3) => event3.observedAt));
+  const parsed = parseKimiWire(wire.raw, id, observedAt, text5(entry?.workDir), since);
+  if (parsed.length === 0) return [];
+  const after = await stat3(actualWire).catch(() => null);
+  if (!after || after.size !== wire.size || after.mtimeMs !== wire.mtimeMs) return [];
+  const stateAfter = await stat3(actualState).catch(() => null);
+  if (!stateAfter || stateAfter.size !== state.size || stateAfter.mtimeMs !== state.mtimeMs) return [];
+  const enriched = parsed.map((event3, index2) => {
+    if (index2 !== parsed.length - 1) return event3;
+    const { eventId: _eventId, observedAt: _observedAt, ...facts } = event3;
+    const agents = object9(metadata.agents);
+    const hasChildren = agents && Object.keys(agents).some((agent) => agent !== "main");
+    return kimiEvent(id, observedAt, {
+      ...facts,
+      sourceAt: Math.max(event3.sourceAt ?? 0, wire.mtimeMs),
+      title: text5(metadata.title),
+      transcriptPath: actualWire,
+      fileSize: wire.size,
+      usage: event3.usage ? { ...event3.usage, status: hasChildren && event3.usage.status === "complete" ? "partial" : event3.usage.status } : void 0
+    });
+  });
+  for (const original of events.filter((event3) => event3.needsHydration && !event3.resolvesEventId)) {
+    const { eventId, observedAt: _observedAt, ...facts } = original;
+    enriched.push(kimiEvent(id, observedAt, { ...facts, sourceAt: original.sourceAt ?? original.observedAt, needsHydration: false, resolvesEventId: eventId }));
+  }
+  return enriched;
+}
+
+// src/shared/collectors/journal.ts
+import { createHash as createHash3, randomUUID } from "crypto";
+import { link, mkdir, open, readdir as readdir2, readFile as readFile5, rename, unlink } from "fs/promises";
+import path8 from "path";
+
+// src/shared/collectors/state.ts
+var HOSTS = ["cursor", "grok", "kimi", "zcode"];
+var HEX_HASH = /^[a-f0-9]{64}$/;
+function hostOf(key) {
+  const separator = key.indexOf(":");
+  const host = key.slice(0, separator);
+  return separator > 0 && separator < key.length - 1 && HOSTS.includes(host) ? host : void 0;
+}
+function object10(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function number(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+function validEvent(value, key, id) {
+  const data = object10(value);
+  if (!data || data.version !== 1 || !hostOf(key) || data.agent !== hostOf(key) || typeof data.nativeSessionId !== "string" || `${data.agent}:${data.nativeSessionId}` !== key || data.eventId !== id || !HEX_HASH.test(id) || !number(data.observedAt)) return false;
+  for (const field of ["sourceSessionId", "resolvesEventId", "turnId", "prompt", "project", "model", "title", "transcriptPath"]) {
+    if (data[field] !== void 0 && typeof data[field] !== "string") return false;
+  }
+  for (const field of ["sourceAt", "fileSize"]) {
+    if (data[field] !== void 0 && !number(data[field])) return false;
+  }
+  for (const field of ["rootSession", "unresolvedParent", "confirmsTurn", "needsHydration"]) {
+    if (data[field] !== void 0 && typeof data[field] !== "boolean") return false;
+  }
+  if (data.tool !== void 0) {
+    const tool = object10(data.tool);
+    if (!tool || typeof tool.id !== "string" || !tool.id || typeof tool.name !== "string" || !tool.name || tool.skill !== void 0 && typeof tool.skill !== "string") return false;
+  }
+  if (data.usage !== void 0) {
+    const usage = object10(data.usage);
+    if (!usage || ![usage.input, usage.output, usage.cached].every(number) || !["complete", "partial", "unavailable"].includes(String(usage.status))) return false;
+  }
+  return true;
+}
+var UnsupportedCollectorStateError = class extends Error {
+  constructor() {
+    super("unsupported collector agent or state version; preserving data");
+  }
+};
+function parseState(raw, key) {
+  const state = object10(JSON.parse(raw));
+  if (state && (typeof state.version === "number" && state.version > 1 || typeof state.agent === "string" && !HOSTS.includes(state.agent))) {
+    throw new UnsupportedCollectorStateError();
+  }
+  const events = object10(state?.events);
+  if (!state || state.version !== 1 || !hostOf(key) || state.agent !== hostOf(key) || typeof state.nativeSessionId !== "string" || `${state.agent}:${state.nativeSessionId}` !== key || !events || !Object.entries(events).every(([id, event3]) => validEvent(event3, key, id))) {
+    throw new Error("invalid collector state");
+  }
+  return state;
 }
 
 // src/shared/collectors/reduce.ts
@@ -2402,7 +2526,7 @@ function toSnapshot(state) {
       if (hasText2(event3.tool.skill)) skills.add(event3.tool.skill);
     }
   }
-  const confirmedPrompts = [...prompts].filter(([turnId2]) => confirmed.has(turnId2)).map(([, prompt]) => prompt);
+  const confirmedPrompts = [...prompts].filter(([turnId3]) => confirmed.has(turnId3)).map(([, prompt]) => prompt);
   if (!hasActivity && confirmedPrompts.length === 0) return null;
   const rootEvents = events.filter(rootEvent);
   const rootEventsById = new Map(rootEvents.map((event3) => [event3.eventId, event3]));
@@ -2462,6 +2586,304 @@ function toSnapshot(state) {
   };
 }
 
+// src/shared/collectors/journal.ts
+function legacyDirectory(home, key) {
+  return path8.join(home, "collectors", createHash3("sha256").update(key).digest("hex"));
+}
+function collectorDirectory(home, key) {
+  const host = hostOf(key);
+  const legacy = legacyDirectory(home, key);
+  return host === "kimi" || host === "zcode" ? path8.join(path8.dirname(legacy), host, path8.basename(legacy)) : legacy;
+}
+async function names(directory) {
+  try {
+    return await readdir2(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+function eventFiles(files) {
+  return files.filter((name) => name.endsWith(".json") && HEX_HASH.test(name.slice(0, -5))).sort();
+}
+async function ensureDirectory(home, key) {
+  const directory = collectorDirectory(home, key);
+  await mkdir(path8.join(directory, "outbox"), { recursive: true, mode: 448 });
+  return directory;
+}
+async function durableWrite(filePath, value) {
+  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
+  const file = await open(tempPath, "wx", 384);
+  try {
+    await file.writeFile(JSON.stringify(value));
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  try {
+    await rename(tempPath, filePath);
+  } finally {
+    await unlink(tempPath).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+async function writeOnce(filePath, raw) {
+  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
+  const file = await open(tempPath, "wx", 384);
+  try {
+    await file.writeFile(raw);
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  try {
+    await link(tempPath, filePath);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  } finally {
+    await unlink(tempPath);
+  }
+}
+var CorruptCollectorStateError = class extends Error {
+  constructor(corruptPath) {
+    super(`corrupt collector state moved to ${corruptPath}; host hydration required`);
+    this.corruptPath = corruptPath;
+  }
+  corruptPath;
+};
+function createJournal(home) {
+  return {
+    async prepare(key) {
+      const host = hostOf(key);
+      if (host !== "kimi" && host !== "zcode") return;
+      const legacy = legacyDirectory(home, key);
+      let identity;
+      try {
+        identity = JSON.parse(await readFile5(path8.join(legacy, "identity.json"), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") return;
+        throw error;
+      }
+      if (identity.key !== key) throw new Error("legacy collector identity mismatch");
+      const files = await names(legacy);
+      const quarantined = files.filter((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
+      const stateName = files.includes("state.json") ? "state.json" : quarantined.length === 1 ? quarantined[0] : void 0;
+      if (!stateName && quarantined.length > 0) throw new CorruptCollectorStateError(legacy);
+      const directory = await ensureDirectory(home, key);
+      if (stateName) {
+        const original = parseState(await readFile5(path8.join(legacy, stateName), "utf8"), key);
+        const current = await this.load(key);
+        await this.save(key, reduceEvents(current ?? original, current ? Object.values(original.events) : []));
+      } else {
+        await this.load(key);
+      }
+      await writeOnce(path8.join(directory, "identity.json"), JSON.stringify({ key }));
+      for (const name of eventFiles(await names(path8.join(legacy, "outbox")))) {
+        const source = path8.join(legacy, "outbox", name);
+        await writeOnce(path8.join(directory, "outbox", name), await readFile5(source, "utf8"));
+        await unlink(source);
+      }
+      const backup = path8.join(home, "collector-backups", host, path8.basename(legacy));
+      const stateFiles = files.filter((name) => name === "state.json" || quarantined.includes(name));
+      if (stateFiles.length > 0) {
+        await mkdir(backup, { recursive: true, mode: 448 });
+        for (const name of stateFiles) await rename(path8.join(legacy, name), path8.join(backup, `${name}.${randomUUID()}.recovered`));
+      }
+      if (eventFiles(await names(path8.join(legacy, "outbox"))).length === 0) {
+        await unlink(path8.join(legacy, "identity.json"));
+      }
+    },
+    async enqueue(event3) {
+      if (!HEX_HASH.test(event3.eventId)) throw new Error("invalid collector event id");
+      const key = sessionKey(event3.agent, event3.nativeSessionId);
+      const directory = await ensureDirectory(home, key);
+      await writeOnce(path8.join(directory, "identity.json"), JSON.stringify({ key }));
+      await writeOnce(path8.join(directory, "outbox", `${event3.eventId}.json`), JSON.stringify(event3));
+    },
+    async pending(key) {
+      const outbox = path8.join(collectorDirectory(home, key), "outbox");
+      let names2;
+      try {
+        names2 = await readdir2(outbox);
+      } catch (error) {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }
+      const events = [];
+      for (const name of eventFiles(names2)) {
+        try {
+          const event3 = JSON.parse(await readFile5(path8.join(outbox, name), "utf8"));
+          if (validEvent(event3, key, name.slice(0, -5))) events.push(event3);
+          else console.warn(`[timeline] unsupported or invalid outbox event preserved: ${name}`);
+        } catch (error) {
+          console.warn(`[timeline] unreadable outbox event ${name}: ${String(error)}`);
+        }
+      }
+      return events;
+    },
+    async load(key) {
+      const statePath = path8.join(collectorDirectory(home, key), "state.json");
+      try {
+        return parseState(await readFile5(statePath, "utf8"), key);
+      } catch (error) {
+        if (error instanceof UnsupportedCollectorStateError) throw error;
+        if (error.code === "ENOENT") {
+          const names2 = await readdir2(path8.dirname(statePath)).catch(() => []);
+          const corrupt = names2.find((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
+          if (corrupt) throw new CorruptCollectorStateError(path8.join(path8.dirname(statePath), corrupt));
+          return null;
+        }
+        const corruptPath = `${statePath}.${Date.now()}-${randomUUID()}.corrupt`;
+        await rename(statePath, corruptPath).catch(() => void 0);
+        throw new CorruptCollectorStateError(corruptPath);
+      }
+    },
+    async save(key, state) {
+      const directory = await ensureDirectory(home, key);
+      await durableWrite(path8.join(directory, "state.json"), state);
+    },
+    async ack(key, eventIds) {
+      const outbox = path8.join(collectorDirectory(home, key), "outbox");
+      await Promise.all(eventIds.filter((id) => HEX_HASH.test(id)).map(async (id) => {
+        await unlink(path8.join(outbox, `${id}.json`)).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+      }));
+    },
+    async keys() {
+      const root = path8.join(home, "collectors");
+      const directories = (await names(root)).filter((name) => HEX_HASH.test(name)).map((name) => path8.join(root, name));
+      for (const host of ["kimi", "zcode"]) {
+        directories.push(...(await names(path8.join(root, host))).filter((name) => HEX_HASH.test(name)).map((name) => path8.join(root, host, name)));
+      }
+      const keys = /* @__PURE__ */ new Set();
+      for (const base of directories) {
+        try {
+          const identity = JSON.parse(await readFile5(path8.join(base, "identity.json"), "utf8"));
+          if (typeof identity.key !== "string" || !hostOf(identity.key)) continue;
+          if (base !== collectorDirectory(home, identity.key) && base !== legacyDirectory(home, identity.key)) continue;
+          if (eventFiles(await names(path8.join(base, "outbox"))).length > 0) keys.add(identity.key);
+        } catch (error) {
+          if (error.code === "ENOENT") continue;
+          console.warn(`[timeline] unreadable collector identity ${base}: ${String(error)}`);
+        }
+      }
+      return [...keys].sort();
+    }
+  };
+}
+
+// src/shared/collectors/lock.ts
+import { createHash as createHash4, randomUUID as randomUUID2 } from "crypto";
+import { link as link2, mkdir as mkdir2, readFile as readFile6, unlink as unlink2, writeFile } from "fs/promises";
+import path9 from "path";
+import { setTimeout as delay } from "timers/promises";
+function lockPath(home, key) {
+  return path9.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
+}
+async function readLock(filePath) {
+  let raw;
+  try {
+    raw = await readFile6(filePath, "utf8");
+  } catch (error) {
+    return error.code === "ENOENT" ? { status: "missing" } : { status: "malformed" };
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (Number.isInteger(value.pid) && value.pid > 0 && typeof value.token === "string") {
+      return { status: "record", record: value };
+    }
+  } catch {
+  }
+  return { status: "malformed" };
+}
+function isDead(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}
+async function releaseLock(filePath, token) {
+  const current = await readLock(filePath);
+  if (current.status === "record" && current.record.token === token && current.record.pid === process.pid) {
+    await unlink2(filePath).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+async function acquireLock(filePath, deadline, depth = 0) {
+  if (depth > 16) return null;
+  const token = randomUUID2();
+  const temporary = `${filePath}.${token}.tmp`;
+  while (true) {
+    let linked = false;
+    try {
+      await writeFile(temporary, JSON.stringify({ pid: process.pid, token }), { mode: 384 });
+      await link2(temporary, filePath);
+      linked = true;
+    } catch (error) {
+      await unlink2(temporary).catch((unlinkError) => {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      });
+      if (error.code !== "EEXIST") throw error;
+    }
+    if (linked) {
+      await unlink2(temporary).catch((unlinkError) => {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      });
+      const current = await readLock(filePath);
+      if (current.status === "record" && current.record.token === token && current.record.pid === process.pid) {
+        return token;
+      }
+      if (Date.now() >= deadline) return null;
+      continue;
+    }
+    const existing = await readLock(filePath);
+    if (existing.status === "missing") {
+      if (Date.now() >= deadline) return null;
+      continue;
+    }
+    if (existing.status === "malformed") {
+      console.warn(`[timeline] preserving malformed session lock ${filePath}`);
+      return null;
+    }
+    if (isDead(existing.record.pid)) {
+      const guardPath = `${filePath}.reclaim`;
+      const guardToken = await acquireLock(guardPath, deadline, depth + 1);
+      if (guardToken) {
+        try {
+          const guard = await readLock(guardPath);
+          const current = await readLock(filePath);
+          if (guard.status === "record" && guard.record.token === guardToken && guard.record.pid === process.pid && current.status === "record" && current.record.token === existing.record.token && current.record.pid === existing.record.pid && isDead(current.record.pid)) {
+            await unlink2(filePath).catch((error) => {
+              if (error.code !== "ENOENT") throw error;
+            });
+          }
+        } finally {
+          await releaseLock(guardPath, guardToken);
+        }
+        continue;
+      }
+    }
+    if (Date.now() >= deadline) return null;
+    await delay(20);
+  }
+}
+async function withSessionLock(home, key, action, waitMs = 300) {
+  const filePath = lockPath(home, key);
+  await mkdir2(path9.dirname(filePath), { recursive: true, mode: 448 });
+  const token = await acquireLock(filePath, Date.now() + waitMs);
+  if (!token) return { acquired: false };
+  try {
+    return { acquired: true, value: await action() };
+  } finally {
+    await releaseLock(filePath, token);
+  }
+}
+
 // src/shared/collectors/ingest-event.ts
 var SOFT_BUDGET_MS = 1e3;
 function keyOf(event3) {
@@ -2510,6 +2932,12 @@ async function processKey(key, deps, deadline) {
   if (Date.now() >= deadline) return { status: "queued", forwarded: [] };
   const journal = createJournal(deps.home);
   const locked = await withSessionLock(deps.home, key, async () => {
+    try {
+      await journal.prepare(key);
+    } catch (error) {
+      console.warn(`[timeline] collector migration queued: ${String(error)}`);
+      return { status: "queued", forwarded: [] };
+    }
     const pending = await journal.pending(key);
     if (pending.length === 0) return { status: "ignored", forwarded: [] };
     let previous;
@@ -2617,7 +3045,7 @@ async function replayPending(deps) {
 
 // src/ingest.ts
 var cli = cac("ohmyc-timeline-ingest");
-cli.command("", "Ingest a single session into the timeline DB").option("--session-id <id>", "Session UUID (disk-path mode)").option("--transcript-path <path>", "Path to JSONL transcript (disk-path mode)").option("--agent-name <name>", "Agent name for disk-path mode", { default: "claude" }).option("--raw", "Read pre-parsed ParsedSessionData JSON from stdin").option("--hook <host>", "Read native cursor, grok, or auto hook JSON from stdin").option("--replay-pending", "Replay durable collector events").option("--detect-host", "Print cursor, grok, or legacy for hook JSON on stdin").action(async (options) => {
+cli.command("", "Ingest a single session into the timeline DB").option("--session-id <id>", "Session UUID (disk-path mode)").option("--transcript-path <path>", "Path to JSONL transcript (disk-path mode)").option("--agent-name <name>", "Agent name for disk-path mode", { default: "claude" }).option("--raw", "Read pre-parsed ParsedSessionData JSON from stdin").option("--hook <host>", "Read native cursor, grok, kimi, zcode, or auto hook JSON from stdin").option("--replay-pending", "Replay durable collector events").option("--detect-host", "Print cursor, grok, kimi, zcode, or legacy for hook JSON on stdin").action(async (options) => {
   if (options.detectHost) {
     if (options.raw || options.hook || options.replayPending || options.sessionId || options.transcriptPath) {
       fail("--detect-host cannot be combined with a write mode");
@@ -2700,19 +3128,22 @@ async function readJsonStdin(mode) {
   }
 }
 function collectorHome() {
-  return process.env.OHMYC_HOME ?? path8.join(os3.homedir(), ".config", "ohmyc");
+  return process.env.OHMYC_HOME ?? path10.join(os3.homedir(), ".config", "ohmyc");
 }
 function grokHome() {
-  return process.env.GROK_HOME ?? path8.join(os3.homedir(), ".grok");
+  return process.env.GROK_HOME ?? path10.join(os3.homedir(), ".grok");
 }
 function hydrate(events) {
   const agent = events[0]?.agent;
   if (agent === "cursor") return hydrateCursor(events);
   if (agent === "grok") return hydrateGrok(events, grokHome());
+  if (agent === "kimi") return hydrateKimi(events, process.env.KIMI_CODE_HOME ?? path10.join(os3.homedir(), ".kimi-code"));
   return Promise.resolve([]);
 }
-function parseHook(host, input) {
+async function parseHook(host, input) {
   const observedAt = Date.now();
+  if (host === "zcode") return parseZcodeHook(input, observedAt);
+  if (host === "kimi") return parseKimiHook(input, observedAt);
   return host === "cursor" ? parseCursorHook(input, observedAt) : parseGrokHook(input, observedAt);
 }
 async function withCollectorWriter(action) {
@@ -2729,13 +3160,13 @@ async function withCollectorWriter(action) {
   }
 }
 async function runHookMode(requestedHost) {
-  if (!["cursor", "grok", "auto"].includes(requestedHost)) {
-    fail("--hook must be cursor, grok, or auto");
+  if (!["cursor", "grok", "kimi", "zcode", "auto"].includes(requestedHost)) {
+    fail("--hook must be cursor, grok, kimi, zcode, or auto");
   }
   const input = await readJsonStdin("--hook");
   const host = requestedHost === "auto" ? detectHost(input, process.env) : requestedHost;
   if (!host) fail("unable to detect native hook host");
-  const events = parseHook(host, input);
+  const events = await parseHook(host, input);
   if (events.length === 0) fail(`invalid ${host} hook payload`);
   await withCollectorWriter(async (write) => {
     await ingestEvents(events, { home: collectorHome(), hydrate, write });

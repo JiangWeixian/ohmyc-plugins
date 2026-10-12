@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/bun-1.3.12-000000?style=flat-square&logo=bun)](.github/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](package.json)
 
-Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **Grok Build**, and **OpenCode** and ingests it into the OhMyC Timeline dashboard.
+Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **Grok Build**, **Kimi Code CLI**, **ZCode**, and **OpenCode** and ingests it into the OhMyC Timeline dashboard.
 
 ## Supported Agents
 
@@ -15,6 +15,8 @@ Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **G
 | Codex | Codex plugin manifest, default `hooks/hooks.json`, and `hooks/ingest-codex.sh` | Codex JSONL sessions in `~/.codex/sessions/` and `~/.codex/archived_sessions/` |
 | Cursor CLI | Native Cursor plugin hooks | Hook events plus the transcript path supplied by Cursor when available |
 | Grok Build | Native Grok plugin hooks | Hook events and the matching session files under `$GROK_HOME/sessions/` |
+| Kimi Code CLI | Native Kimi plugin hooks | Session index, metadata, and main-agent wire records under `$KIMI_CODE_HOME` |
+| ZCode | Native ZCode plugin hooks | Native turn and tool IDs; temporary per-hook transcript when needed |
 | OpenCode | OpenCode plugin entry at `opencode.ts` | Real-time OpenCode lifecycle, message, and tool events |
 
 Cursor CLI `2026.09.10-fd3934a` verified local custom-manifest hook loading,
@@ -26,13 +28,13 @@ are tested versions, not claimed minimum versions.
 
 ## Requirements
 
-- Node.js 22 or later for the Claude Code, Codex, Cursor, and Grok hook
+- Node.js 22 or later for the Claude Code, Codex, Cursor, Grok, Kimi, and ZCode hook
   runtimes. If `node` is unavailable, native hooks fail open and cannot record
   the event.
 - Bun 1.3.x when building from source or running the development test suite.
 - `jq` is optional. Hook scripts use it for a faster transcript parse and fall back to Node when it is unavailable.
-- One supported host: Claude Code, Codex, Cursor CLI, Grok Build, or OpenCode.
-- Cursor records token status as unavailable; Grok records complete or partial
+- One supported host: Claude Code, Codex, Cursor CLI, Grok Build, Kimi Code CLI, ZCode, or OpenCode.
+- Cursor and ZCode record token status as unavailable; Grok records complete or partial
   usage only when its validated session usage file provides it. This integration
   preserves the existing OhMyC UI; numeric displays may show zero for unavailable
   usage. The stored token status distinguishes it from measured zero.
@@ -139,6 +141,65 @@ them only from the exact matching local session directory. A stable
 `summary.json` supplies the model and title even when `usage.json` is not
 ready. Missing or partial usage stays queued for a later hook or manual replay.
 
+### Kimi Code CLI
+
+From a built checkout, run this inside Kimi (replace the path with your checkout):
+
+```text
+/plugins install /absolute/path/to/ohmyc-plugins/plugins/timeline
+```
+
+Approve the installation, then start a new session or run `/reload`. Kimi copies
+local plugins into its managed directory; reinstall after rebuilding to update
+that copy. Node.js 22 or later must be available to the hook process.
+
+Local plugin installation was verified with Kimi Code CLI 2.0.2. Collection and
+session resume were verified with 2.1.1 using a local test model endpoint and wire
+protocol 1.5. These are tested versions, not claimed minimum versions.
+
+The collector counts started user turns and completed tool attempts, and records
+explicit Skill calls or successful `SKILL.md` reads. It sums `usage.record` entries
+once, separating cached reads from other input. Missing or wholly invalid usage
+stays unavailable; usable usage with malformed records, or sessions containing
+subagents, is marked partial. This first
+version reads main-agent usage only. Forked sessions exclude inherited activity
+before their creation time. Historical sessions are enriched when a native hook
+runs; this integration does not perform a bulk history import.
+
+### ZCode (GLM)
+
+From a built checkout, add the local marketplace and install the plugin:
+
+```sh
+zcode plugins marketplace add /absolute/path/to/ohmyc-plugins
+zcode plugins install timeline@ohmyc
+```
+
+Enable hooks in `~/.zcode/cli/config.json` by setting `hooks.enabled` to `true`,
+then start a new session. Reinstall or update the plugin after rebuilding the
+checkout, because ZCode uses a managed copy. Node.js 22 or later must be available.
+
+Installation, two consecutive turns, and session resume were verified with the
+ZCode 0.16.9 CLI bundled in ZCode 3.14.4, using a local test model endpoint. These
+are tested versions, not claimed minimum versions or a live GLM service test.
+
+The collector records the host as `zcode` and preserves the native model value
+(for example, a GLM model). It joins prompts with completed turns by native
+`turnId`, deduplicates completed tool attempts by native tool-call ID, and records
+explicit Skill calls or successful `SKILL.md` reads with matching returned paths.
+Blocked prompts do not count as completed turns.
+
+ZCode hooks provide no token usage; their temporary transcript contains only the
+current prompt or response and disappears after the hook exits. The collector
+normalizes the available facts before returning and stores them durably for
+replay if the Timeline database is unavailable. Token status stays `unavailable`;
+this adapter does not estimate usage or import historical sessions. Collection
+begins after installation. The existing default Stop hook is reused once; the
+ZCode-specific hook file registers only the other supported events.
+
+Official [ZCode hooks documentation](https://zcode.z.ai/en/docs/hooks) and
+[plugin documentation](https://zcode.z.ai/en/docs/plugin).
+
 ## Configuration
 
 | Option | Type | Default | Example | Description |
@@ -147,6 +208,7 @@ ready. Missing or partial usage stays queued for a later hook or manual replay.
 | `AGENT_HOME` | environment variable | `~/.claude` | `/tmp/.claude` | Claude transcript root used by `ingest-claude.sh`. |
 | `CODEX_HOME` | environment variable | `~/.codex` | `/tmp/.codex` | Codex session root used by `ingest-codex.sh`. |
 | `GROK_HOME` | environment variable | `~/.grok` | `/tmp/.grok` | Grok session root used for session enrichment. |
+| `KIMI_CODE_HOME` | environment variable | `~/.kimi-code` | `/tmp/kimi-code` | Kimi session root used for session enrichment. |
 
 ## Recover Pending Events
 
@@ -160,6 +222,21 @@ node plugins/timeline/dist/ingest.mjs --replay-pending
 
 The command uses `OHMYC_HOME` when set. Normal hooks run the bundled file
 directly and do not install dependencies with `npx`.
+
+Kimi and ZCode keep pending data in separate `collectors/kimi/` and
+`collectors/zcode/` directories under `OHMYC_HOME`, so older releases that only
+support Cursor/Grok cannot replay or quarantine those records. Cursor/Grok retain
+their existing storage layout and all agents still write to the same database.
+
+When processing a Kimi/ZCode session, hooks and manual replay migrate its earlier
+flat-directory records under the existing session lock. Valid state is merged
+without duplicating events, pending captures remain durable, and the original
+state is retained in `collector-backups/`. A single valid Kimi/ZCode state file
+mislabelled `.corrupt` by an older release is recovered during migration. Truly
+invalid state or ambiguous backups stay preserved and require manual repair.
+Unrecognized agents and schema versions are preserved instead of quarantined or
+acknowledged. An older release cannot collect new activity for agents it does
+not support; switching back to a supporting release resumes pending writes.
 
 ## Contributing
 

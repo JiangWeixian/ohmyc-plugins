@@ -31,16 +31,28 @@ export function eventKey(event: Omit<CollectorEvent, 'eventId' | 'observedAt'>):
 
 export function detectHost(input: unknown, env: NodeJS.ProcessEnv): Host | null {
   const payload = fields(input)
+  if (hasText(env.ZCODE_SESSION_ID) && hasText(payload.sessionId) && hasText(payload.hookEventName)) {
+    return env.ZCODE_SESSION_ID === payload.sessionId
+      && payload.session_id === payload.sessionId
+      && payload.hook_event_name === payload.hookEventName
+      && !hasText(payload.conversation_id)
+      && payload.client_type !== 'kimi_code_cli' ? 'zcode' : null
+  }
   const nativeGrok = hasText(payload.sessionId) && hasText(payload.hookEventName)
   const nativeCursor = hasText(payload.conversation_id)
     && (hasText(payload.hook_event_name) || hasText(payload.cursor_version))
 
-  if (nativeGrok && nativeCursor) {
-    console.warn('[timeline] conflicting native host evidence: grok,cursor')
+  const nativeKimi = payload.client_type === 'kimi_code_cli'
+    && hasText(payload.session_id) && hasText(payload.hook_event_name)
+  const candidates: Host[] = []
+  if (nativeGrok) candidates.push('grok')
+  if (nativeCursor) candidates.push('cursor')
+  if (nativeKimi) candidates.push('kimi')
+  if (candidates.length > 1) {
+    console.warn(`[timeline] conflicting native host evidence: ${candidates.join(',')}`)
     return null
   }
-  if (nativeGrok) return 'grok'
-  if (nativeCursor) return 'cursor'
+  if (candidates.length === 1) return candidates[0]
 
   if (hasText(env.GROK_SESSION_ID) || hasText(env.GROK_HOOK_EVENT)) return 'grok'
   if (hasText(payload.conversation_id) && hasText(env.CURSOR_VERSION)) return 'cursor'
