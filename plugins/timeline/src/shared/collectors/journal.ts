@@ -94,7 +94,7 @@ export function createJournal(home: string) {
       try {
         const state = JSON.parse(await readFile(statePath, 'utf8')) as Partial<CollectorState>
         if (state.version !== 1
-          || (state.agent !== 'cursor' && state.agent !== 'grok')
+          || (state.agent !== 'cursor' && state.agent !== 'grok' && state.agent !== 'kimi' && state.agent !== 'zcode')
           || typeof state.nativeSessionId !== 'string'
           || !state.events || typeof state.events !== 'object'
           || sessionKey(state.agent, state.nativeSessionId) !== key) {

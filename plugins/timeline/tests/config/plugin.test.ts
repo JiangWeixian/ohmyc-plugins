@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 import {
@@ -37,10 +38,52 @@ describe('npm package contents', () => {
       '.codex-plugin',
       '.cursor-plugin',
       '.grok-plugin',
+      '.kimi-plugin',
+      '.zcode-plugin',
       'dist',
       'hooks',
     ]))
     expect(packageJson.files).not.toContain('.agents')
+  })
+})
+
+describe('Kimi plugin installation', () => {
+  it('ships versioned native hooks that ingest from a plugin root with spaces', () => {
+    const pluginRoot = path.resolve(import.meta.dirname, '../..')
+    const manifest = JSON.parse(readFileSync(path.join(pluginRoot, '.kimi-plugin/plugin.json'), 'utf8'))
+    const pkg = JSON.parse(readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'))
+    expect(manifest.version).toBe(pkg.version)
+    expect(manifest.name).toBe('timeline')
+    expect(manifest.hooks.map((hook: { event: string }) => hook.event)).toEqual([
+      'SessionStart', 'TurnStarted', 'PostToolUse', 'PostToolUseFailure',
+      'Stop', 'StopFailure', 'Interrupt', 'SubagentStop', 'PostCompact', 'SessionEnd',
+    ])
+    const root = mkdtempSync(path.join(os.tmpdir(), 'kimi install '))
+    const installRoot = path.join(root, 'plugin root')
+    const env = { ...process.env, KIMI_PLUGIN_ROOT: installRoot, KIMI_CODE_HOME: path.join(root, 'kimi'), OHMYC_HOME: path.join(root, 'ohmyc') }
+    try {
+      for (const directory of ['hooks', 'dist']) cpSync(path.join(pluginRoot, directory), path.join(installRoot, directory), { recursive: true })
+      for (const hook of manifest.hooks) {
+        expect(hook.timeout).toBe(3)
+        expect(execFileSync('sh', ['-c', hook.command], {
+          cwd: installRoot, env,
+          input: JSON.stringify({ client_type: 'kimi_code_cli', session_id: 'invalid' }),
+          encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'],
+        })).toBe('')
+      }
+      execFileSync('sh', ['-c', manifest.hooks.find((hook: { event: string }) => hook.event === 'TurnStarted').command], {
+        cwd: installRoot, env,
+        input: JSON.stringify({ client_type: 'kimi_code_cli', session_id: 'installed', hook_event_name: 'TurnStarted', turn_id: 0, origin_kind: 'user', prompt: 'installed hook' }),
+        stdio: ['pipe', 'pipe', 'ignore'],
+      })
+      const result = execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e',
+        'import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync(process.argv[1]); console.log(JSON.stringify(db.prepare("SELECT session_id, agent_name, turns FROM sessions").all())); db.close()',
+        path.join(env.OHMYC_HOME, 'timeline.db'),
+      ], { encoding: 'utf8' })
+      expect(JSON.parse(result)).toEqual([{ session_id: 'kimi:installed', agent_name: 'kimi', turns: 1 }])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 })
 
@@ -210,6 +253,8 @@ describe('manifest versions', () => {
     nativeVersions.push(...[
       'plugins/timeline/.cursor-plugin/plugin.json',
       'plugins/timeline/.grok-plugin/plugin.json',
+      'plugins/timeline/.kimi-plugin/plugin.json',
+      'plugins/timeline/.zcode-plugin/plugin.json',
     ].map(file => {
       const doc = JSON.parse(readFileSync(path.join(repoRoot, file), 'utf8')) as { version: string }
       return doc.version
@@ -328,5 +373,43 @@ describe('OpenCode lifecycle compatibility', () => {
 
     expect(packageJson.peerDependencies['@opencode-ai/plugin']).toBe('^1.16.0')
     expect(packageJson.devDependencies['@opencode-ai/plugin']).toBe('^1.16.0')
+  })
+})
+
+
+describe('ZCode plugin installation', () => {
+  it('ships native process hooks and reuses the default Stop exactly once', () => {
+    const root = path.resolve(import.meta.dirname, '../..')
+    const manifest = JSON.parse(readFileSync(path.join(root, '.zcode-plugin/plugin.json'), 'utf8'))
+    expect(manifest.version).toBe(JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8')).version)
+    expect(manifest.name).toBe('timeline')
+    expect(manifest.hooks).toBe('./hooks/zcode/hooks.json')
+    const hooks = JSON.parse(readFileSync(path.join(root, manifest.hooks), 'utf8')).hooks
+    expect(Object.keys(hooks)).toEqual(['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PostToolUseFailure'])
+    const temp = mkdtempSync(path.join(os.tmpdir(), 'zcode install '))
+    const install = path.join(temp, 'plugin root')
+    try {
+      for (const dir of ['hooks', 'dist']) cpSync(path.join(root, dir), path.join(install, dir), { recursive: true })
+      const env = { ...process.env, ZCODE_SESSION_ID: 'installed', ZCODE_PLUGIN_ROOT: install, CLAUDE_PLUGIN_ROOT: install, OHMYC_HOME: path.join(temp, 'ohmyc') }
+      for (const [event, facts] of [['SessionStart', { model: 'glm-test' }], ['UserPromptSubmit', { prompt: 'installed prompt', turnId: 't1' }], ['Stop', { turnId: 't1' }]] as const) {
+        const payload = JSON.stringify({ sessionId: 'installed', session_id: 'installed', hookEventName: event, hook_event_name: event, timestamp: '2026-10-08T01:00:00Z', ...facts })
+        if (event === 'Stop') {
+          const command = JSON.parse(readFileSync(path.join(install, 'hooks/hooks.json'), 'utf8')).hooks.Stop[0].hooks[0].command
+          execFileSync('sh', ['-c', command], { env, input: payload, stdio: ['pipe', 'pipe', 'ignore'] })
+        } else {
+          const processHook = hooks[event][0].hooks[0]
+          expect(processHook.type).toBe('process')
+          expect(processHook.timeoutMs).toBe(5000)
+          const args = processHook.args.map((arg: string) => arg.replace('$' + '{ZCODE_PLUGIN_ROOT}', install))
+          expect(execFileSync(processHook.command, args, { env, input: payload, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).toBe('')
+          expect(execFileSync(processHook.command, args, { env, input: 'invalid JSON', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).toBe('')
+        }
+      }
+      const result = execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e',
+        'import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync(process.argv[1]); console.log(JSON.stringify(db.prepare("SELECT session_id, agent_name, turns, model, token_status FROM sessions").all())); db.close()', path.join(env.OHMYC_HOME, 'timeline.db')], { encoding: 'utf8' })
+      expect(JSON.parse(result)).toEqual([{ session_id: 'zcode:installed', agent_name: 'zcode', turns: 1, model: 'glm-test', token_status: 'unavailable' }])
+    } finally {
+      rmSync(temp, { recursive: true, force: true })
+    }
   })
 })

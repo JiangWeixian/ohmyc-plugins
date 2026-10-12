@@ -1,0 +1,52 @@
+[
+  {
+    "hook_event_name": "SessionStart",
+    "session_id": "native-session",
+    "cwd": "/tmp/demo",
+    "client_type": "kimi_code_cli",
+    "source": "startup",
+    "model": "test",
+    "profile": "agent"
+  },
+  {
+    "hook_event_name": "TurnStarted",
+    "session_id": "native-session",
+    "cwd": "/tmp/demo",
+    "client_type": "kimi_code_cli",
+    "turn_id": 0,
+    "origin_kind": "user",
+    "prompt": "Read the test skill, then answer briefly."
+  },
+  {
+    "hook_event_name": "Stop",
+    "session_id": "native-session",
+    "cwd": "/tmp/demo",
+    "client_type": "kimi_code_cli",
+    "stop_hook_active": false
+  },
+  {
+    "hook_event_name": "SessionStart",
+    "session_id": "native-session",
+    "cwd": "/tmp/demo",
+    "client_type": "kimi_code_cli",
+    "source": "resume",
+    "model": "test",
+    "profile": "agent"
+  },
+  {
+    "hook_event_name": "TurnStarted",
+    "session_id": "native-session",
+    "cwd": "/tmp/demo",
+    "client_type": "kimi_code_cli",
+    "turn_id": 1,
+    "origin_kind": "user",
+    "prompt": "Continue this session with a short reply."
+  },
+  {
+    "hook_event_name": "Stop",
+    "session_id": "native-session",
+    "cwd": "/tmp/demo",
+    "client_type": "kimi_code_cli",
+    "stop_hook_active": false
+  }
+]

@@ -42,6 +42,8 @@ describe('shared hook routing', () => {
   }
 
   const routes = [
+    { env: { ZCODE_SESSION_ID: 'z1', CLAUDE_PLUGIN_ROOT: 'self' }, payload: { sessionId: 'z1', session_id: 'z1', hookEventName: 'Stop', hook_event_name: 'Stop' }, expected: 'event' },
+    { env: { CLAUDE_PLUGIN_ROOT: 'self' }, payload: { client_type: 'kimi_code_cli', session_id: 'k1', hook_event_name: 'Stop' }, expected: 'event' },
     { env: { PLUGIN_ROOT: 'self' }, payload: { session_id: 'x' }, expected: 'ingest-codex.sh' },
     { env: { CLAUDE_PLUGIN_ROOT: 'self', CLAUDE_SESSION_ID: 'claude-1' }, payload: {}, expected: 'ingest-claude.sh' },
     { env: { GROK_SESSION_ID: 'g1', CLAUDE_PLUGIN_ROOT: 'self' }, payload: { sessionId: 'g1', hookEventName: 'stop' }, expected: 'event' },
