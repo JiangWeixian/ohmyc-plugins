@@ -66,6 +66,12 @@ async function processKey(key: string, deps: Dependencies, deadline: number): Pr
   if (Date.now() >= deadline) return { status: 'queued', forwarded: [] }
   const journal = createJournal(deps.home)
   const locked = await withSessionLock(deps.home, key, async (): Promise<ProcessResult> => {
+    try {
+      await journal.prepare(key)
+    } catch (error) {
+      console.warn(`[timeline] collector migration queued: ${String(error)}`)
+      return { status: 'queued', forwarded: [] }
+    }
     const pending = await journal.pending(key)
     if (pending.length === 0) return { status: 'ignored', forwarded: [] }
 

@@ -492,8 +492,8 @@ function hasCodexTokenFields(value) {
   return "input_tokens" in value || "output_tokens" in value || "cached_input_tokens" in value;
 }
 function numberValue(value) {
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+  const number2 = Number(value);
+  return Number.isFinite(number2) ? number2 : null;
 }
 function isRecord(value) {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -2418,250 +2418,58 @@ async function hydrateKimi(events, home) {
 import { createHash as createHash3, randomUUID } from "crypto";
 import { link, mkdir, open, readdir as readdir2, readFile as readFile5, rename, unlink } from "fs/promises";
 import path8 from "path";
-var HEX_HASH = /^[a-f0-9]{64}$/;
-function collectorDirectory(home, key) {
-  const hash = createHash3("sha256").update(key).digest("hex");
-  return path8.join(home, "collectors", hash);
-}
-async function ensureDirectory(home, key) {
-  const directory = collectorDirectory(home, key);
-  await mkdir(path8.join(directory, "outbox"), { recursive: true, mode: 448 });
-  return directory;
-}
-async function durableWrite(filePath, value) {
-  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
-  const file = await open(tempPath, "wx", 384);
-  try {
-    await file.writeFile(JSON.stringify(value));
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  try {
-    await rename(tempPath, filePath);
-  } finally {
-    await unlink(tempPath).catch((error) => {
-      if (error.code !== "ENOENT") throw error;
-    });
-  }
-}
-async function writeOnce(filePath, value) {
-  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
-  const file = await open(tempPath, "wx", 384);
-  try {
-    await file.writeFile(JSON.stringify(value));
-    await file.sync();
-  } finally {
-    await file.close();
-  }
-  try {
-    await link(tempPath, filePath);
-  } catch (error) {
-    if (error.code !== "EEXIST") throw error;
-  } finally {
-    await unlink(tempPath);
-  }
-}
-var CorruptCollectorStateError = class extends Error {
-  constructor(corruptPath) {
-    super(`corrupt collector state moved to ${corruptPath}; host hydration required`);
-    this.corruptPath = corruptPath;
-  }
-  corruptPath;
-};
-function createJournal(home) {
-  return {
-    async enqueue(event3) {
-      if (!HEX_HASH.test(event3.eventId)) throw new Error("invalid collector event id");
-      const key = sessionKey(event3.agent, event3.nativeSessionId);
-      const directory = await ensureDirectory(home, key);
-      await writeOnce(path8.join(directory, "identity.json"), { key });
-      await writeOnce(path8.join(directory, "outbox", `${event3.eventId}.json`), event3);
-    },
-    async pending(key) {
-      const outbox = path8.join(collectorDirectory(home, key), "outbox");
-      let names;
-      try {
-        names = await readdir2(outbox);
-      } catch (error) {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      }
-      const events = [];
-      for (const name of names.filter((name2) => HEX_HASH.test(name2.slice(0, -5)) && name2.endsWith(".json")).sort()) {
-        try {
-          events.push(JSON.parse(await readFile5(path8.join(outbox, name), "utf8")));
-        } catch (error) {
-          console.warn(`[timeline] unreadable outbox event ${name}: ${String(error)}`);
-        }
-      }
-      return events;
-    },
-    async load(key) {
-      const statePath = path8.join(collectorDirectory(home, key), "state.json");
-      try {
-        const state = JSON.parse(await readFile5(statePath, "utf8"));
-        if (state.version !== 1 || state.agent !== "cursor" && state.agent !== "grok" && state.agent !== "kimi" && state.agent !== "zcode" || typeof state.nativeSessionId !== "string" || !state.events || typeof state.events !== "object" || sessionKey(state.agent, state.nativeSessionId) !== key) {
-          throw new Error("invalid collector state");
-        }
-        return state;
-      } catch (error) {
-        if (error.code === "ENOENT") {
-          const names = await readdir2(path8.dirname(statePath)).catch(() => []);
-          const corrupt = names.find((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
-          if (corrupt) throw new CorruptCollectorStateError(path8.join(path8.dirname(statePath), corrupt));
-          return null;
-        }
-        const corruptPath = `${statePath}.${Date.now()}-${randomUUID()}.corrupt`;
-        await rename(statePath, corruptPath).catch(() => void 0);
-        throw new CorruptCollectorStateError(corruptPath);
-      }
-    },
-    async save(key, state) {
-      const directory = await ensureDirectory(home, key);
-      await durableWrite(path8.join(directory, "state.json"), state);
-    },
-    async ack(key, eventIds) {
-      const outbox = path8.join(collectorDirectory(home, key), "outbox");
-      await Promise.all(eventIds.filter((id) => HEX_HASH.test(id)).map(async (id) => {
-        await unlink(path8.join(outbox, `${id}.json`)).catch((error) => {
-          if (error.code !== "ENOENT") throw error;
-        });
-      }));
-    },
-    async keys() {
-      const root = path8.join(home, "collectors");
-      let directories;
-      try {
-        directories = await readdir2(root);
-      } catch (error) {
-        if (error.code === "ENOENT") return [];
-        throw error;
-      }
-      const keys = [];
-      for (const directory of directories) {
-        const base = path8.join(root, directory);
-        try {
-          const identity = JSON.parse(await readFile5(path8.join(base, "identity.json"), "utf8"));
-          if (typeof identity.key !== "string") continue;
-          if ((await this.pending(identity.key)).length > 0) keys.push(identity.key);
-        } catch (error) {
-          console.warn(`[timeline] unreadable collector identity ${directory}: ${String(error)}`);
-        }
-      }
-      return keys.sort();
-    }
-  };
-}
 
-// src/shared/collectors/lock.ts
-import { createHash as createHash4, randomUUID as randomUUID2 } from "crypto";
-import { link as link2, mkdir as mkdir2, readFile as readFile6, unlink as unlink2, writeFile } from "fs/promises";
-import path9 from "path";
-import { setTimeout as delay } from "timers/promises";
-function lockPath(home, key) {
-  return path9.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
+// src/shared/collectors/state.ts
+var HOSTS = ["cursor", "grok", "kimi", "zcode"];
+var HEX_HASH = /^[a-f0-9]{64}$/;
+function hostOf(key) {
+  const separator = key.indexOf(":");
+  const host = key.slice(0, separator);
+  return separator > 0 && separator < key.length - 1 && HOSTS.includes(host) ? host : void 0;
 }
-async function readLock(filePath) {
-  let raw;
-  try {
-    raw = await readFile6(filePath, "utf8");
-  } catch (error) {
-    return error.code === "ENOENT" ? { status: "missing" } : { status: "malformed" };
-  }
-  try {
-    const value = JSON.parse(raw);
-    if (Number.isInteger(value.pid) && value.pid > 0 && typeof value.token === "string") {
-      return { status: "record", record: value };
-    }
-  } catch {
-  }
-  return { status: "malformed" };
+function object10(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
-function isDead(pid) {
-  try {
-    process.kill(pid, 0);
-    return false;
-  } catch (error) {
-    return error.code === "ESRCH";
-  }
+function number(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
-async function releaseLock(filePath, token) {
-  const current = await readLock(filePath);
-  if (current.status === "record" && current.record.token === token && current.record.pid === process.pid) {
-    await unlink2(filePath).catch((error) => {
-      if (error.code !== "ENOENT") throw error;
-    });
+function validEvent(value, key, id) {
+  const data = object10(value);
+  if (!data || data.version !== 1 || !hostOf(key) || data.agent !== hostOf(key) || typeof data.nativeSessionId !== "string" || `${data.agent}:${data.nativeSessionId}` !== key || data.eventId !== id || !HEX_HASH.test(id) || !number(data.observedAt)) return false;
+  for (const field of ["sourceSessionId", "resolvesEventId", "turnId", "prompt", "project", "model", "title", "transcriptPath"]) {
+    if (data[field] !== void 0 && typeof data[field] !== "string") return false;
   }
+  for (const field of ["sourceAt", "fileSize"]) {
+    if (data[field] !== void 0 && !number(data[field])) return false;
+  }
+  for (const field of ["rootSession", "unresolvedParent", "confirmsTurn", "needsHydration"]) {
+    if (data[field] !== void 0 && typeof data[field] !== "boolean") return false;
+  }
+  if (data.tool !== void 0) {
+    const tool = object10(data.tool);
+    if (!tool || typeof tool.id !== "string" || !tool.id || typeof tool.name !== "string" || !tool.name || tool.skill !== void 0 && typeof tool.skill !== "string") return false;
+  }
+  if (data.usage !== void 0) {
+    const usage = object10(data.usage);
+    if (!usage || ![usage.input, usage.output, usage.cached].every(number) || !["complete", "partial", "unavailable"].includes(String(usage.status))) return false;
+  }
+  return true;
 }
-async function acquireLock(filePath, deadline, depth = 0) {
-  if (depth > 16) return null;
-  const token = randomUUID2();
-  const temporary = `${filePath}.${token}.tmp`;
-  while (true) {
-    let linked = false;
-    try {
-      await writeFile(temporary, JSON.stringify({ pid: process.pid, token }), { mode: 384 });
-      await link2(temporary, filePath);
-      linked = true;
-    } catch (error) {
-      await unlink2(temporary).catch((unlinkError) => {
-        if (unlinkError.code !== "ENOENT") throw unlinkError;
-      });
-      if (error.code !== "EEXIST") throw error;
-    }
-    if (linked) {
-      await unlink2(temporary).catch((unlinkError) => {
-        if (unlinkError.code !== "ENOENT") throw unlinkError;
-      });
-      const current = await readLock(filePath);
-      if (current.status === "record" && current.record.token === token && current.record.pid === process.pid) {
-        return token;
-      }
-      if (Date.now() >= deadline) return null;
-      continue;
-    }
-    const existing = await readLock(filePath);
-    if (existing.status === "missing") {
-      if (Date.now() >= deadline) return null;
-      continue;
-    }
-    if (existing.status === "malformed") {
-      console.warn(`[timeline] preserving malformed session lock ${filePath}`);
-      return null;
-    }
-    if (isDead(existing.record.pid)) {
-      const guardPath = `${filePath}.reclaim`;
-      const guardToken = await acquireLock(guardPath, deadline, depth + 1);
-      if (guardToken) {
-        try {
-          const guard = await readLock(guardPath);
-          const current = await readLock(filePath);
-          if (guard.status === "record" && guard.record.token === guardToken && guard.record.pid === process.pid && current.status === "record" && current.record.token === existing.record.token && current.record.pid === existing.record.pid && isDead(current.record.pid)) {
-            await unlink2(filePath).catch((error) => {
-              if (error.code !== "ENOENT") throw error;
-            });
-          }
-        } finally {
-          await releaseLock(guardPath, guardToken);
-        }
-        continue;
-      }
-    }
-    if (Date.now() >= deadline) return null;
-    await delay(20);
+var UnsupportedCollectorStateError = class extends Error {
+  constructor() {
+    super("unsupported collector agent or state version; preserving data");
   }
-}
-async function withSessionLock(home, key, action, waitMs = 300) {
-  const filePath = lockPath(home, key);
-  await mkdir2(path9.dirname(filePath), { recursive: true, mode: 448 });
-  const token = await acquireLock(filePath, Date.now() + waitMs);
-  if (!token) return { acquired: false };
-  try {
-    return { acquired: true, value: await action() };
-  } finally {
-    await releaseLock(filePath, token);
+};
+function parseState(raw, key) {
+  const state = object10(JSON.parse(raw));
+  if (state && (typeof state.version === "number" && state.version > 1 || typeof state.agent === "string" && !HOSTS.includes(state.agent))) {
+    throw new UnsupportedCollectorStateError();
   }
+  const events = object10(state?.events);
+  if (!state || state.version !== 1 || !hostOf(key) || state.agent !== hostOf(key) || typeof state.nativeSessionId !== "string" || `${state.agent}:${state.nativeSessionId}` !== key || !events || !Object.entries(events).every(([id, event3]) => validEvent(event3, key, id))) {
+    throw new Error("invalid collector state");
+  }
+  return state;
 }
 
 // src/shared/collectors/reduce.ts
@@ -2778,6 +2586,304 @@ function toSnapshot(state) {
   };
 }
 
+// src/shared/collectors/journal.ts
+function legacyDirectory(home, key) {
+  return path8.join(home, "collectors", createHash3("sha256").update(key).digest("hex"));
+}
+function collectorDirectory(home, key) {
+  const host = hostOf(key);
+  const legacy = legacyDirectory(home, key);
+  return host === "kimi" || host === "zcode" ? path8.join(path8.dirname(legacy), host, path8.basename(legacy)) : legacy;
+}
+async function names(directory) {
+  try {
+    return await readdir2(directory);
+  } catch (error) {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  }
+}
+function eventFiles(files) {
+  return files.filter((name) => name.endsWith(".json") && HEX_HASH.test(name.slice(0, -5))).sort();
+}
+async function ensureDirectory(home, key) {
+  const directory = collectorDirectory(home, key);
+  await mkdir(path8.join(directory, "outbox"), { recursive: true, mode: 448 });
+  return directory;
+}
+async function durableWrite(filePath, value) {
+  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
+  const file = await open(tempPath, "wx", 384);
+  try {
+    await file.writeFile(JSON.stringify(value));
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  try {
+    await rename(tempPath, filePath);
+  } finally {
+    await unlink(tempPath).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+async function writeOnce(filePath, raw) {
+  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
+  const file = await open(tempPath, "wx", 384);
+  try {
+    await file.writeFile(raw);
+    await file.sync();
+  } finally {
+    await file.close();
+  }
+  try {
+    await link(tempPath, filePath);
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  } finally {
+    await unlink(tempPath);
+  }
+}
+var CorruptCollectorStateError = class extends Error {
+  constructor(corruptPath) {
+    super(`corrupt collector state moved to ${corruptPath}; host hydration required`);
+    this.corruptPath = corruptPath;
+  }
+  corruptPath;
+};
+function createJournal(home) {
+  return {
+    async prepare(key) {
+      const host = hostOf(key);
+      if (host !== "kimi" && host !== "zcode") return;
+      const legacy = legacyDirectory(home, key);
+      let identity;
+      try {
+        identity = JSON.parse(await readFile5(path8.join(legacy, "identity.json"), "utf8"));
+      } catch (error) {
+        if (error.code === "ENOENT") return;
+        throw error;
+      }
+      if (identity.key !== key) throw new Error("legacy collector identity mismatch");
+      const files = await names(legacy);
+      const quarantined = files.filter((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
+      const stateName = files.includes("state.json") ? "state.json" : quarantined.length === 1 ? quarantined[0] : void 0;
+      if (!stateName && quarantined.length > 0) throw new CorruptCollectorStateError(legacy);
+      const directory = await ensureDirectory(home, key);
+      if (stateName) {
+        const original = parseState(await readFile5(path8.join(legacy, stateName), "utf8"), key);
+        const current = await this.load(key);
+        await this.save(key, reduceEvents(current ?? original, current ? Object.values(original.events) : []));
+      } else {
+        await this.load(key);
+      }
+      await writeOnce(path8.join(directory, "identity.json"), JSON.stringify({ key }));
+      for (const name of eventFiles(await names(path8.join(legacy, "outbox")))) {
+        const source = path8.join(legacy, "outbox", name);
+        await writeOnce(path8.join(directory, "outbox", name), await readFile5(source, "utf8"));
+        await unlink(source);
+      }
+      const backup = path8.join(home, "collector-backups", host, path8.basename(legacy));
+      const stateFiles = files.filter((name) => name === "state.json" || quarantined.includes(name));
+      if (stateFiles.length > 0) {
+        await mkdir(backup, { recursive: true, mode: 448 });
+        for (const name of stateFiles) await rename(path8.join(legacy, name), path8.join(backup, `${name}.${randomUUID()}.recovered`));
+      }
+      if (eventFiles(await names(path8.join(legacy, "outbox"))).length === 0) {
+        await unlink(path8.join(legacy, "identity.json"));
+      }
+    },
+    async enqueue(event3) {
+      if (!HEX_HASH.test(event3.eventId)) throw new Error("invalid collector event id");
+      const key = sessionKey(event3.agent, event3.nativeSessionId);
+      const directory = await ensureDirectory(home, key);
+      await writeOnce(path8.join(directory, "identity.json"), JSON.stringify({ key }));
+      await writeOnce(path8.join(directory, "outbox", `${event3.eventId}.json`), JSON.stringify(event3));
+    },
+    async pending(key) {
+      const outbox = path8.join(collectorDirectory(home, key), "outbox");
+      let names2;
+      try {
+        names2 = await readdir2(outbox);
+      } catch (error) {
+        if (error.code === "ENOENT") return [];
+        throw error;
+      }
+      const events = [];
+      for (const name of eventFiles(names2)) {
+        try {
+          const event3 = JSON.parse(await readFile5(path8.join(outbox, name), "utf8"));
+          if (validEvent(event3, key, name.slice(0, -5))) events.push(event3);
+          else console.warn(`[timeline] unsupported or invalid outbox event preserved: ${name}`);
+        } catch (error) {
+          console.warn(`[timeline] unreadable outbox event ${name}: ${String(error)}`);
+        }
+      }
+      return events;
+    },
+    async load(key) {
+      const statePath = path8.join(collectorDirectory(home, key), "state.json");
+      try {
+        return parseState(await readFile5(statePath, "utf8"), key);
+      } catch (error) {
+        if (error instanceof UnsupportedCollectorStateError) throw error;
+        if (error.code === "ENOENT") {
+          const names2 = await readdir2(path8.dirname(statePath)).catch(() => []);
+          const corrupt = names2.find((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
+          if (corrupt) throw new CorruptCollectorStateError(path8.join(path8.dirname(statePath), corrupt));
+          return null;
+        }
+        const corruptPath = `${statePath}.${Date.now()}-${randomUUID()}.corrupt`;
+        await rename(statePath, corruptPath).catch(() => void 0);
+        throw new CorruptCollectorStateError(corruptPath);
+      }
+    },
+    async save(key, state) {
+      const directory = await ensureDirectory(home, key);
+      await durableWrite(path8.join(directory, "state.json"), state);
+    },
+    async ack(key, eventIds) {
+      const outbox = path8.join(collectorDirectory(home, key), "outbox");
+      await Promise.all(eventIds.filter((id) => HEX_HASH.test(id)).map(async (id) => {
+        await unlink(path8.join(outbox, `${id}.json`)).catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
+      }));
+    },
+    async keys() {
+      const root = path8.join(home, "collectors");
+      const directories = (await names(root)).filter((name) => HEX_HASH.test(name)).map((name) => path8.join(root, name));
+      for (const host of ["kimi", "zcode"]) {
+        directories.push(...(await names(path8.join(root, host))).filter((name) => HEX_HASH.test(name)).map((name) => path8.join(root, host, name)));
+      }
+      const keys = /* @__PURE__ */ new Set();
+      for (const base of directories) {
+        try {
+          const identity = JSON.parse(await readFile5(path8.join(base, "identity.json"), "utf8"));
+          if (typeof identity.key !== "string" || !hostOf(identity.key)) continue;
+          if (base !== collectorDirectory(home, identity.key) && base !== legacyDirectory(home, identity.key)) continue;
+          if (eventFiles(await names(path8.join(base, "outbox"))).length > 0) keys.add(identity.key);
+        } catch (error) {
+          if (error.code === "ENOENT") continue;
+          console.warn(`[timeline] unreadable collector identity ${base}: ${String(error)}`);
+        }
+      }
+      return [...keys].sort();
+    }
+  };
+}
+
+// src/shared/collectors/lock.ts
+import { createHash as createHash4, randomUUID as randomUUID2 } from "crypto";
+import { link as link2, mkdir as mkdir2, readFile as readFile6, unlink as unlink2, writeFile } from "fs/promises";
+import path9 from "path";
+import { setTimeout as delay } from "timers/promises";
+function lockPath(home, key) {
+  return path9.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
+}
+async function readLock(filePath) {
+  let raw;
+  try {
+    raw = await readFile6(filePath, "utf8");
+  } catch (error) {
+    return error.code === "ENOENT" ? { status: "missing" } : { status: "malformed" };
+  }
+  try {
+    const value = JSON.parse(raw);
+    if (Number.isInteger(value.pid) && value.pid > 0 && typeof value.token === "string") {
+      return { status: "record", record: value };
+    }
+  } catch {
+  }
+  return { status: "malformed" };
+}
+function isDead(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === "ESRCH";
+  }
+}
+async function releaseLock(filePath, token) {
+  const current = await readLock(filePath);
+  if (current.status === "record" && current.record.token === token && current.record.pid === process.pid) {
+    await unlink2(filePath).catch((error) => {
+      if (error.code !== "ENOENT") throw error;
+    });
+  }
+}
+async function acquireLock(filePath, deadline, depth = 0) {
+  if (depth > 16) return null;
+  const token = randomUUID2();
+  const temporary = `${filePath}.${token}.tmp`;
+  while (true) {
+    let linked = false;
+    try {
+      await writeFile(temporary, JSON.stringify({ pid: process.pid, token }), { mode: 384 });
+      await link2(temporary, filePath);
+      linked = true;
+    } catch (error) {
+      await unlink2(temporary).catch((unlinkError) => {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      });
+      if (error.code !== "EEXIST") throw error;
+    }
+    if (linked) {
+      await unlink2(temporary).catch((unlinkError) => {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      });
+      const current = await readLock(filePath);
+      if (current.status === "record" && current.record.token === token && current.record.pid === process.pid) {
+        return token;
+      }
+      if (Date.now() >= deadline) return null;
+      continue;
+    }
+    const existing = await readLock(filePath);
+    if (existing.status === "missing") {
+      if (Date.now() >= deadline) return null;
+      continue;
+    }
+    if (existing.status === "malformed") {
+      console.warn(`[timeline] preserving malformed session lock ${filePath}`);
+      return null;
+    }
+    if (isDead(existing.record.pid)) {
+      const guardPath = `${filePath}.reclaim`;
+      const guardToken = await acquireLock(guardPath, deadline, depth + 1);
+      if (guardToken) {
+        try {
+          const guard = await readLock(guardPath);
+          const current = await readLock(filePath);
+          if (guard.status === "record" && guard.record.token === guardToken && guard.record.pid === process.pid && current.status === "record" && current.record.token === existing.record.token && current.record.pid === existing.record.pid && isDead(current.record.pid)) {
+            await unlink2(filePath).catch((error) => {
+              if (error.code !== "ENOENT") throw error;
+            });
+          }
+        } finally {
+          await releaseLock(guardPath, guardToken);
+        }
+        continue;
+      }
+    }
+    if (Date.now() >= deadline) return null;
+    await delay(20);
+  }
+}
+async function withSessionLock(home, key, action, waitMs = 300) {
+  const filePath = lockPath(home, key);
+  await mkdir2(path9.dirname(filePath), { recursive: true, mode: 448 });
+  const token = await acquireLock(filePath, Date.now() + waitMs);
+  if (!token) return { acquired: false };
+  try {
+    return { acquired: true, value: await action() };
+  } finally {
+    await releaseLock(filePath, token);
+  }
+}
+
 // src/shared/collectors/ingest-event.ts
 var SOFT_BUDGET_MS = 1e3;
 function keyOf(event3) {
@@ -2826,6 +2932,12 @@ async function processKey(key, deps, deadline) {
   if (Date.now() >= deadline) return { status: "queued", forwarded: [] };
   const journal = createJournal(deps.home);
   const locked = await withSessionLock(deps.home, key, async () => {
+    try {
+      await journal.prepare(key);
+    } catch (error) {
+      console.warn(`[timeline] collector migration queued: ${String(error)}`);
+      return { status: "queued", forwarded: [] };
+    }
     const pending = await journal.pending(key);
     if (pending.length === 0) return { status: "ignored", forwarded: [] };
     let previous;

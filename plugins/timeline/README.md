@@ -223,6 +223,21 @@ node plugins/timeline/dist/ingest.mjs --replay-pending
 The command uses `OHMYC_HOME` when set. Normal hooks run the bundled file
 directly and do not install dependencies with `npx`.
 
+Kimi and ZCode keep pending data in separate `collectors/kimi/` and
+`collectors/zcode/` directories under `OHMYC_HOME`, so older releases that only
+support Cursor/Grok cannot replay or quarantine those records. Cursor/Grok retain
+their existing storage layout and all agents still write to the same database.
+
+When processing a Kimi/ZCode session, hooks and manual replay migrate its earlier
+flat-directory records under the existing session lock. Valid state is merged
+without duplicating events, pending captures remain durable, and the original
+state is retained in `collector-backups/`. A single valid Kimi/ZCode state file
+mislabelled `.corrupt` by an older release is recovered during migration. Truly
+invalid state or ambiguous backups stay preserved and require manual repair.
+Unrecognized agents and schema versions are preserved instead of quarantined or
+acknowledged. An older release cannot collect new activity for agents it does
+not support; switching back to a supporting release resumes pending writes.
+
 ## Contributing
 
 For local setup, agent testing from a checkout, build commands, tests, commit style, and pull request expectations, see [CONTRIBUTING.md](CONTRIBUTING.md).
