@@ -141,9 +141,23 @@ them only from the exact matching local session directory. A stable
 `summary.json` supplies the model and title even when `usage.json` is not
 ready. Missing or partial usage stays queued for a later hook or manual replay.
 
-### Kimi Code CLI
+### Kimi Code App and CLI
 
-From a built checkout, run this inside Kimi (replace the path with your checkout):
+In Kimi Code App, open Settings → Plugins → Install custom plugin and paste:
+
+```text
+https://github.com/JiangWeixian/ohmyc-plugins/tree/main
+```
+
+The repository root includes a Kimi manifest that runs the Timeline hooks from
+`plugins/timeline/`. The `/tree/main` URL selects the branch explicitly. Bare
+repository URLs first select the latest GitHub release; Kimi Code App 1.0.4
+truncates the scoped Changesets tag `@ohmyc/timeline-plugin@1.1.0` at `/`, causing
+an HTTP 404. The app also treats everything after `/tree/` as a ref, so appending
+`/plugins/timeline` does not select a plugin subdirectory.
+
+From a built checkout, you can also run this inside Kimi CLI (replace the path
+with your checkout):
 
 ```text
 /plugins install /absolute/path/to/ohmyc-plugins/plugins/timeline
