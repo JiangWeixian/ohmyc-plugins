@@ -1,5 +1,17 @@
 # @ohmyc/timeline-plugin
 
+## 1.2.0
+
+### Minor Changes
+
+- c1ca27c: Add native Kimi Code CLI and ZCode integrations for Timeline session, tool, and skill collection, with durable replay and session-resume deduplication. Read Kimi main-agent token usage from native wire records and preserve unavailable token status for ZCode hooks.
+
+  Isolate Kimi/ZCode pending data from older plugin releases and migrate earlier records with validated recovery, preserving unsupported schemas and original state backups.
+
+### Patch Changes
+
+- c2cb0d4: Add a repository-root Kimi plugin entry and document explicit branch installation so Kimi Code App can install Timeline from GitHub without scoped-release tag or plugin-subdirectory resolution errors.
+
 ## 1.1.0
 
 ### Minor Changes
