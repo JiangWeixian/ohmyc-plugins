@@ -253,6 +253,7 @@ describe('manifest versions', () => {
     nativeVersions.push(...[
       'plugins/timeline/.cursor-plugin/plugin.json',
       'plugins/timeline/.grok-plugin/plugin.json',
+      '.kimi-plugin/plugin.json',
       'plugins/timeline/.kimi-plugin/plugin.json',
       'plugins/timeline/.zcode-plugin/plugin.json',
     ].map(file => {
@@ -410,6 +411,34 @@ describe('ZCode plugin installation', () => {
       expect(JSON.parse(result)).toEqual([{ session_id: 'zcode:installed', agent_name: 'zcode', turns: 1, model: 'glm-test', token_status: 'unavailable' }])
     } finally {
       rmSync(temp, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Kimi App repository installation', () => {
+  it('runs repository-root hooks from a copied Git archive layout', () => {
+    const pluginRoot = path.resolve(import.meta.dirname, '../..')
+    const repoRoot = path.resolve(pluginRoot, '../..')
+    const manifest = JSON.parse(readFileSync(path.join(repoRoot, '.kimi-plugin/plugin.json'), 'utf8'))
+    const nested = JSON.parse(readFileSync(path.join(pluginRoot, '.kimi-plugin/plugin.json'), 'utf8'))
+    const pkg = JSON.parse(readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'))
+    expect(manifest.name).toBe(nested.name)
+    expect(manifest.version).toBe(pkg.version)
+    expect(manifest.hooks.map((hook: { event: string }) => hook.event)).toEqual(nested.hooks.map((hook: { event: string }) => hook.event))
+    const root = mkdtempSync(path.join(os.tmpdir(), 'kimi repository install '))
+    const installRoot = path.join(root, 'managed root')
+    const env = { ...process.env, OHMYC_HOME: path.join(root, 'ohmyc'), KIMI_CODE_HOME: path.join(root, 'kimi') }
+    try {
+      cpSync(path.join(repoRoot, '.kimi-plugin'), path.join(installRoot, '.kimi-plugin'), { recursive: true })
+      for (const dir of ['dist', 'hooks']) cpSync(path.join(pluginRoot, dir), path.join(installRoot, 'plugins/timeline', dir), { recursive: true })
+      for (const hook of manifest.hooks) expect(execFileSync('sh', ['-c', hook.command], { cwd: installRoot, env, input: 'invalid JSON', encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] })).toBe('')
+      const command = manifest.hooks.find((hook: { event: string }) => hook.event === 'TurnStarted').command
+      execFileSync('sh', ['-c', command], { cwd: installRoot, env, input: JSON.stringify({ client_type: 'kimi_code_cli', session_id: 'app-install', hook_event_name: 'TurnStarted', turn_id: 0, origin_kind: 'user', prompt: 'repository installation' }) })
+      const result = execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e',
+        'import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync(process.argv[1]); console.log(JSON.stringify(db.prepare("SELECT session_id,agent_name,turns FROM sessions").all())); db.close()', path.join(env.OHMYC_HOME, 'timeline.db')], { encoding: 'utf8' })
+      expect(JSON.parse(result)).toEqual([{ session_id: 'kimi:app-install', agent_name: 'kimi', turns: 1 }])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 })

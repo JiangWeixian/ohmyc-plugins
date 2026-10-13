@@ -44,6 +44,11 @@ const targets = [
     },
   },
   {
+    file: '.kimi-plugin/plugin.json',
+    read: doc => doc.version,
+    write: (doc, version) => { doc.version = version },
+  },
+  {
     file: 'plugins/timeline/.kimi-plugin/plugin.json',
     read: doc => doc.version,
     write: (doc, version) => { doc.version = version },
