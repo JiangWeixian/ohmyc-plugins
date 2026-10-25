@@ -362,18 +362,28 @@ describe('OpenCode bundle boundaries', () => {
     ) as { scripts: { build: string } }
 
     expect(packageJson.scripts.build).toContain('--external @opencode-ai/plugin')
+    expect(packageJson.scripts.build).toContain('--external @opencode/plugin')
     expect(packageJson.scripts.build).not.toContain('--external @ohmyc/timeline')
   })
 })
 
 describe('OpenCode lifecycle compatibility', () => {
-  it('requires a plugin host with disposal finalization support', () => {
+  it('declares both supported host APIs without installing an unused host', () => {
     const packageJson = JSON.parse(
       readFileSync(path.resolve(import.meta.dirname, '../../package.json'), 'utf8'),
-    ) as { peerDependencies: Record<string, string>; devDependencies: Record<string, string> }
+    ) as { peerDependencies: Record<string, string>; peerDependenciesMeta: Record<string, { optional: boolean }>; devDependencies: Record<string, string> }
 
-    expect(packageJson.peerDependencies['@opencode-ai/plugin']).toBe('^1.16.0')
-    expect(packageJson.devDependencies['@opencode-ai/plugin']).toBe('^1.16.0')
+    expect(packageJson.peerDependencies['@opencode-ai/plugin']).toBe('^1.18.29')
+    expect(packageJson.peerDependencies['@opencode/plugin']).toBe('^2.0.32')
+    expect(packageJson.devDependencies['@opencode/plugin']).toBe('2.0.32')
+    expect(packageJson.peerDependenciesMeta['@opencode/plugin'].optional).toBe(true)
+    expect(packageJson.peerDependenciesMeta['@opencode-ai/plugin'].optional).toBe(true)
+  })
+
+  it('loads the standalone bundle with both v2 setup and v1 server entrypoints', () => {
+    const bundle = path.resolve(import.meta.dirname, '../../dist/index.js')
+    const output = execFileSync('bun', ['-e', `const p = (await import(${JSON.stringify(bundle)})).default; console.log(JSON.stringify({id: p.id, setup: typeof p.setup, server: typeof p.server}))`], { encoding: 'utf8' })
+    expect(JSON.parse(output)).toEqual({ id: 'ohmyc.timeline', setup: 'function', server: 'function' })
   })
 })
 

@@ -81,18 +81,25 @@ Official Codex plugin docs: <https://developers.openai.com/codex/plugins>
 
 ### OpenCode
 
-OpenCode can load plugins from npm packages or local plugin files. If you use the package form, add the package name to `opencode.json`:
+Requires OpenCode 2.0.32 or newer. Add to `opencode.json`:
 
 ```json
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": ["@ohmyc/timeline-plugin"]
+  "plugins": ["@ohmyc/timeline-plugin"]
 }
 ```
 
-The plugin records session lifecycle, message, and tool events through OpenCode hooks.
+OpenCode 1.18.29 and newer 1.x releases can use the same package with the
+`plugin` configuration key.
 
-Official OpenCode plugin docs: <https://opencode.ai/docs/plugins/>
+V2 records checkpoints from session events and keeps collected history in
+OpenCode's plugin storage across compaction and restarts. Child sessions are
+merged into their root after the plugin observes their activity. It does not
+backfill inactive historical children. Existing Timeline sessions without a V2
+checkpoint, and sessions compacted before collection started, keep their existing
+statistics. The plugin logs that their history is incomplete because V2's plugin
+API exposes only the active context and cannot enumerate historical children.
 
 ### Cursor CLI
 

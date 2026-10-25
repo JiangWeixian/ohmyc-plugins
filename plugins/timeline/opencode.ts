@@ -11,7 +11,9 @@ import { createWriter } from '@ohmyc/timeline'
 import { migrate } from '@ohmyc/timeline/migrate'
 
 import type { Plugin, PluginInput } from '@opencode-ai/plugin'
+import type { Plugin as V2Plugin } from '@opencode/plugin'
 import type { ParsedSessionData } from '@ohmyc/timeline/ingest'
+import { createOpenCodeV2Runtime } from './src/opencode/v2'
 
 const LOG_FILE = path.join(os.tmpdir(), 'timeline-plugin.log')
 
@@ -19,6 +21,7 @@ export interface HydratedSessionNode {
   info: Record<string, any>
   messages: Array<{ info: Record<string, any>; parts: Array<Record<string, any>> }>
   children: HydratedSessionNode[]
+  skills?: string[]
 }
 
 interface SdkResponse<T> {
@@ -654,6 +657,7 @@ export function createEventHandler(deps: EventHandlerDeps) {
     applyRootMetadata(acc, tree.info, 'hydrated')
     for (const { sessionID, node } of nodes) {
       for (const message of node.messages) putMessageSnapshot(acc, sessionID, message.info, 'hydrated')
+      for (const skill of node.skills ?? []) acc.legacySkills.add(skill)
     }
     for (const { sessionID, node } of nodes) {
       for (const message of node.messages) {
@@ -995,4 +999,44 @@ export const TimelinePlugin: Plugin = async (input) => {
   })
 }
 
-export default TimelinePlugin
+export async function setupOpenCodeV2(ctx: V2Plugin.Context) {
+  const db = ensureDb()
+  const writer = createWriter(db)
+  const runtime = createOpenCodeV2Runtime(ctx, {
+    log,
+    hasExistingSession: id => Boolean(db.query('SELECT 1 FROM sessions WHERE session_id = ?').get(id)),
+    writeTree: async tree => {
+      const handler = createEventHandler({
+        project: path.basename(tree.info.directory), writer, log,
+        loadSessionTree: async () => tree,
+      })
+      await handler.handler({ event: { type: 'session.idle', properties: { sessionID: tree.info.id } } })
+      await handler.dispose()
+    },
+  })
+  const controller = new AbortController()
+  let events: Promise<void> | undefined
+  try {
+    await ctx.session.hook('compaction', event => runtime.beforeCompaction(event.sessionID))
+    events = (async () => {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal })) await runtime.handleEvent(event)
+    })().catch(error => {
+      if (!controller.signal.aborted) log('error', 'OpenCode v2 event subscription failed', { error: String(error) })
+    })
+  } catch (error) {
+    controller.abort()
+    await disposeTimelineRuntime(runtime.dispose, () => db.close())
+    throw error
+  }
+  return async () => {
+    controller.abort()
+    await events
+    await disposeTimelineRuntime(runtime.dispose, () => db.close())
+  }
+}
+
+export default {
+  id: 'ohmyc.timeline',
+  setup: setupOpenCodeV2,
+  server: TimelinePlugin,
+} satisfies V2Plugin.Plugin & { server: Plugin }
