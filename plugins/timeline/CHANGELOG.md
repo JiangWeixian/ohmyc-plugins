@@ -1,5 +1,25 @@
 # @ohmyc/timeline-plugin
 
+## 2.0.0
+
+### Major Changes
+
+- f2231f8: Support OpenCode 2.0.32 and newer with native event subscriptions, persistent
+  session checkpoints, and skill collection. Preserve collected history across
+  compaction and restarts without overwriting statistics from incomplete history.
+
+  OpenCode 1.x now requires 1.18.29 or newer for the shared package entrypoint.
+
+### Minor Changes
+
+- c1ca27c: Add native Kimi Code CLI and ZCode integrations for Timeline session, tool, and skill collection, with durable replay and session-resume deduplication. Read Kimi main-agent token usage from native wire records and preserve unavailable token status for ZCode hooks.
+
+  Isolate Kimi/ZCode pending data from older plugin releases and migrate earlier records with validated recovery, preserving unsupported schemas and original state backups.
+
+### Patch Changes
+
+- c2cb0d4: Add a repository-root Kimi plugin entry and document explicit branch installation so Kimi Code App can install Timeline from GitHub without scoped-release tag or plugin-subdirectory resolution errors.
+
 ## 1.1.0
 
 ### Minor Changes
