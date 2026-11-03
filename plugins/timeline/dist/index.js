@@ -212,6 +212,183 @@ function migrate(db, options) {
   apply();
 }
 
+// src/opencode/v2.ts
+var checkpointEvents = new Set([
+  "session.inbox.delivered",
+  "session.step.ended",
+  "session.step.failed",
+  "session.execution.succeeded",
+  "session.execution.failed",
+  "session.execution.interrupted",
+  "session.renamed",
+  "session.skill.activated",
+  "session.compaction.ended",
+  "session.compaction.failed",
+  "session.revert.committed",
+  "session.deleted"
+]);
+var key = (id) => `timeline.v2.session.${id}`;
+function normalizeMessages(messages) {
+  return messages.flatMap((message) => {
+    if (message.type === "compaction" && message.status !== "running" && message.tokens) {
+      return [{ info: {
+        id: message.id,
+        role: "assistant",
+        time: message.time,
+        modelID: message.status === "completed" ? message.model?.id : undefined,
+        tokens: message.tokens
+      }, parts: [] }];
+    }
+    if (message.type !== "user" && message.type !== "assistant")
+      return [];
+    const info = {
+      id: message.id,
+      role: message.type,
+      time: message.time,
+      ...message.type === "assistant" ? { modelID: message.model.id, tokens: message.tokens } : {}
+    };
+    const parts = message.type === "user" ? [{ id: `${message.id}:text`, messageID: message.id, type: "text", text: message.text }] : message.content.flatMap((part) => part.type !== "tool" || part.state.status === "streaming" ? [] : [{
+      id: part.id,
+      messageID: message.id,
+      type: "tool",
+      callID: part.id,
+      tool: part.name,
+      state: { input: part.state.input }
+    }]);
+    return [{ info, parts }];
+  });
+}
+function createOpenCodeV2Runtime(ctx, deps) {
+  let tail = Promise.resolve();
+  const compacting = new Set;
+  const saved = async (id) => await ctx.storage.get(key(id));
+  const save = async (id, snapshot) => {
+    await ctx.storage.set(key(id), JSON.parse(JSON.stringify(snapshot)));
+  };
+  async function checkpoint(sessionID, options = {}) {
+    if (options.compactionFailed)
+      compacting.delete(sessionID);
+    const loaded = new Map;
+    const completedCompactions = new Set;
+    async function load(id) {
+      const existing = loaded.get(id);
+      if (existing)
+        return existing;
+      const previous = await saved(id);
+      if (previous?.deleted || id === sessionID && options.deleted) {
+        if (!previous)
+          throw new Error("Deleted session has no collected snapshot");
+        const snapshot3 = { ...previous, deleted: true };
+        loaded.set(id, snapshot3);
+        return snapshot3;
+      }
+      let info;
+      let context;
+      try {
+        [info, context] = await Promise.all([
+          ctx.session.get({ sessionID: id }),
+          ctx.session.context({ sessionID: id })
+        ]);
+      } catch (error) {
+        if (!previous || !error || typeof error !== "object" || !("_tag" in error) || error._tag !== "Session.NotFoundError")
+          throw error;
+        const snapshot3 = { ...previous, deleted: true };
+        loaded.set(id, snapshot3);
+        return snapshot3;
+      }
+      const compaction = context.findLast((message) => message.type === "compaction" && message.status === "completed")?.id;
+      const historyIDs = previous?.historyIDs ?? [];
+      const boundary = compaction ? historyIDs.indexOf(compaction) : -1;
+      const legacyRoot = !previous && !info.parentID && deps.hasExistingSession(id);
+      const complete2 = !legacyRoot && previous?.complete !== false && (!compaction || boundary >= 0 || compacting.has(id));
+      const prefix = compaction ? historyIDs.slice(0, boundary >= 0 ? boundary : undefined) : [];
+      const prefixIDs = new Set(prefix);
+      const retain = (messageID) => prefixIDs.has(messageID);
+      const messages = new Map((previous?.messages ?? []).filter((message) => retain(String(message.info.id))).map((message) => [message.info.id, message]));
+      for (const message of normalizeMessages(context))
+        messages.set(message.info.id, message);
+      const skillMessages = new Map((previous?.skillMessages ?? []).filter((message) => retain(message.id)).map((message) => [message.id, message]));
+      for (const message of context) {
+        const names = message.type === "skill" ? [message.name] : message.type === "user" ? message.skills?.map((skill) => skill.name) ?? [] : [];
+        if (names.length)
+          skillMessages.set(message.id, { id: message.id, names });
+      }
+      const snapshot2 = {
+        info: { id: info.id, parentID: info.parentID, title: info.title, time: info.time, model: info.model, directory: info.location.directory },
+        messages: [...messages.values()],
+        historyIDs: [...new Set([...prefix, ...context.filter((message) => message.type !== "compaction" || message.status !== "running").map((message) => message.id)])],
+        skillMessages: [...skillMessages.values()],
+        skills: [...new Set([...skillMessages.values()].flatMap((message) => message.names))],
+        children: previous?.children ?? [],
+        complete: complete2,
+        compaction
+      };
+      if (compaction && compaction !== previous?.compaction)
+        completedCompactions.add(id);
+      loaded.set(id, snapshot2);
+      return snapshot2;
+    }
+    let rootID = sessionID;
+    let snapshot = await load(rootID);
+    if (snapshot.info.directory !== ctx.location.directory)
+      return;
+    const parents = new Set;
+    while (snapshot.info.parentID) {
+      if (parents.has(rootID))
+        throw new Error("Cyclic OpenCode session parent");
+      parents.add(rootID);
+      const childID = rootID;
+      rootID = String(snapshot.info.parentID);
+      snapshot = await load(rootID);
+      snapshot.children = [...new Set([...snapshot.children, childID])];
+    }
+    let complete = true;
+    const visited = new Set;
+    async function tree(id) {
+      if (visited.has(id))
+        throw new Error("Cyclic OpenCode session tree");
+      visited.add(id);
+      const node = await load(id);
+      complete &&= node.complete;
+      return { info: node.info, messages: node.messages, skills: node.skills, children: await Promise.all(node.children.map(tree)) };
+    }
+    const root = await tree(rootID);
+    for (const [id, node] of loaded) {
+      await save(id, node);
+      if (completedCompactions.has(id))
+        compacting.delete(id);
+    }
+    if (options.compacting)
+      compacting.add(sessionID);
+    if (!complete) {
+      deps.log("warn", "OpenCode v2 history incomplete; preserving existing Timeline statistics", { sessionID: rootID });
+      return;
+    }
+    await deps.writeTree(root);
+  }
+  function enqueue(sessionID, options) {
+    tail = tail.then(() => checkpoint(sessionID, options)).catch((error) => {
+      deps.log("error", "OpenCode v2 checkpoint failed", { sessionID, error: error instanceof Error ? error.message : String(error) });
+    });
+    return tail;
+  }
+  return {
+    handleEvent(event) {
+      if (!checkpointEvents.has(event.type) || event.location && event.location.directory !== ctx.location.directory)
+        return Promise.resolve();
+      const data = event.data;
+      if (!data?.sessionID)
+        return Promise.resolve();
+      return enqueue(data.sessionID, {
+        deleted: event.type === "session.deleted",
+        compactionFailed: event.type === "session.compaction.failed"
+      });
+    },
+    beforeCompaction: (sessionID) => enqueue(sessionID, { compacting: true }),
+    dispose: () => tail
+  };
+}
+
 // opencode.ts
 var LOG_FILE = path.join(os.tmpdir(), "timeline-plugin.log");
 function responseData(label, response) {
@@ -614,35 +791,35 @@ function createEventHandler(deps) {
     return nodes;
   }
   function mergeAccumulator(target, source) {
-    for (const [key, value] of source.messages) {
-      if (!target.messages.has(key))
-        target.messages.set(key, value);
+    for (const [key2, value] of source.messages) {
+      if (!target.messages.has(key2))
+        target.messages.set(key2, value);
     }
-    for (const [key, value] of source.textParts) {
-      if (!target.textParts.has(key))
-        target.textParts.set(key, value);
+    for (const [key2, value] of source.textParts) {
+      if (!target.textParts.has(key2))
+        target.textParts.set(key2, value);
     }
-    for (const [key, value] of source.toolCalls) {
-      if (!target.toolCalls.has(key))
-        target.toolCalls.set(key, value);
+    for (const [key2, value] of source.toolCalls) {
+      if (!target.toolCalls.has(key2))
+        target.toolCalls.set(key2, value);
     }
-    for (const [key, value] of source.toolPartIndex) {
-      if (!target.toolPartIndex.has(key))
-        target.toolPartIndex.set(key, value);
+    for (const [key2, value] of source.toolPartIndex) {
+      if (!target.toolPartIndex.has(key2))
+        target.toolPartIndex.set(key2, value);
     }
-    for (const [key, value] of source.taskHookAliases) {
-      target.taskHookAliases.set(key, value);
+    for (const [key2, value] of source.taskHookAliases) {
+      target.taskHookAliases.set(key2, value);
     }
-    for (const key of source.liveMessageKeys)
-      target.liveMessageKeys.add(key);
-    for (const key of source.livePartKeys)
-      target.livePartKeys.add(key);
-    for (const key of source.liveToolCallKeys)
-      target.liveToolCallKeys.add(key);
-    for (const key of source.messageTombstones)
-      target.messageTombstones.add(key);
-    for (const key of source.partTombstones)
-      target.partTombstones.add(key);
+    for (const key2 of source.liveMessageKeys)
+      target.liveMessageKeys.add(key2);
+    for (const key2 of source.livePartKeys)
+      target.livePartKeys.add(key2);
+    for (const key2 of source.liveToolCallKeys)
+      target.liveToolCallKeys.add(key2);
+    for (const key2 of source.messageTombstones)
+      target.messageTombstones.add(key2);
+    for (const key2 of source.partTombstones)
+      target.partTombstones.add(key2);
     for (const skill of source.legacySkills)
       target.legacySkills.add(skill);
     target.dirty ||= source.dirty;
@@ -651,20 +828,20 @@ function createEventHandler(deps) {
   }
   function clearSessionTombstones(acc, sessionID) {
     const prefix = `${sessionID}:`;
-    for (const key of acc.messageTombstones) {
-      if (key.startsWith(prefix))
-        acc.messageTombstones.delete(key);
+    for (const key2 of acc.messageTombstones) {
+      if (key2.startsWith(prefix))
+        acc.messageTombstones.delete(key2);
     }
-    for (const key of acc.partTombstones) {
-      if (key.startsWith(prefix))
-        acc.partTombstones.delete(key);
+    for (const key2 of acc.partTombstones) {
+      if (key2.startsWith(prefix))
+        acc.partTombstones.delete(key2);
     }
   }
   function clearTaskHookAliases(acc, sessionID) {
     const prefix = `${sessionID}:`;
-    for (const key of acc.taskHookAliases.keys()) {
-      if (key.startsWith(prefix))
-        acc.taskHookAliases.delete(key);
+    for (const key2 of acc.taskHookAliases.keys()) {
+      if (key2.startsWith(prefix))
+        acc.taskHookAliases.delete(key2);
     }
   }
   function mergeHydratedTree(tree, observedSessionID) {
@@ -687,6 +864,8 @@ function createEventHandler(deps) {
     for (const { sessionID, node } of nodes) {
       for (const message of node.messages)
         putMessageSnapshot(acc, sessionID, message.info, "hydrated");
+      for (const skill of node.skills ?? [])
+        acc.legacySkills.add(skill);
     }
     for (const { sessionID, node } of nodes) {
       for (const message of node.messages) {
@@ -976,8 +1155,52 @@ var TimelinePlugin = async (input) => {
     close: () => db?.close()
   });
 };
-var opencode_default = TimelinePlugin;
+async function setupOpenCodeV2(ctx) {
+  const db = ensureDb();
+  const writer = createWriter(db);
+  const runtime = createOpenCodeV2Runtime(ctx, {
+    log,
+    hasExistingSession: (id) => Boolean(db.query("SELECT 1 FROM sessions WHERE session_id = ?").get(id)),
+    writeTree: async (tree) => {
+      const handler = createEventHandler({
+        project: path.basename(tree.info.directory),
+        writer,
+        log,
+        loadSessionTree: async () => tree
+      });
+      await handler.handler({ event: { type: "session.idle", properties: { sessionID: tree.info.id } } });
+      await handler.dispose();
+    }
+  });
+  const controller = new AbortController;
+  let events;
+  try {
+    await ctx.session.hook("compaction", (event) => runtime.beforeCompaction(event.sessionID));
+    events = (async () => {
+      for await (const event of ctx.event.subscribe({ signal: controller.signal }))
+        await runtime.handleEvent(event);
+    })().catch((error) => {
+      if (!controller.signal.aborted)
+        log("error", "OpenCode v2 event subscription failed", { error: String(error) });
+    });
+  } catch (error) {
+    controller.abort();
+    await disposeTimelineRuntime(runtime.dispose, () => db.close());
+    throw error;
+  }
+  return async () => {
+    controller.abort();
+    await events;
+    await disposeTimelineRuntime(runtime.dispose, () => db.close());
+  };
+}
+var opencode_default = {
+  id: "ohmyc.timeline",
+  setup: setupOpenCodeV2,
+  server: TimelinePlugin
+};
 export {
+  setupOpenCodeV2,
   isDefaultSessionTitle,
   disposeTimelineRuntime,
   opencode_default as default,
