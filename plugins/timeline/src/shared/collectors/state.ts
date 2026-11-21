@@ -1,6 +1,6 @@
 import type { CollectorEvent, CollectorState, Host } from './types'
 
-const HOSTS: readonly string[] = ['cursor', 'grok', 'kimi', 'zcode']
+const HOSTS: readonly string[] = ['cursor', 'grok', 'kimi', 'zcode', 'antigravity']
 export const HEX_HASH = /^[a-f0-9]{64}$/
 
 export function hostOf(key: string): Host | undefined {

@@ -1,6 +1,6 @@
 import type { ParsedSessionData } from '@ohmyc/timeline/schema'
 
-export type Host = 'cursor' | 'grok' | 'kimi' | 'zcode'
+export type Host = 'cursor' | 'grok' | 'kimi' | 'zcode' | 'antigravity'
 
 export type Usage = {
   input: number

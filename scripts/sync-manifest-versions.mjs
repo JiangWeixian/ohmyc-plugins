@@ -22,6 +22,11 @@ const packagePath = path.join(repoRoot, 'plugins/timeline/package.json')
  */
 const targets = [
   {
+    file: 'plugins/timeline/.antigravity-plugin/plugin.json',
+    read: doc => doc.version,
+    write: (doc, version) => { doc.version = version },
+  },
+  {
     file: '.claude-plugin/marketplace.json',
     read: doc => doc.plugins.find(p => p.name === 'timeline')?.version,
     write: (doc, version) => {

@@ -17,6 +17,7 @@ import { hydrateGrok } from './agents/grok/session'
 import { parseZcodeHook } from './agents/zcode/hooks'
 import { parseKimiHook } from './agents/kimi/hooks'
 import { hydrateKimi } from './agents/kimi/session'
+import { parseAntigravityHook } from './agents/antigravity/hooks'
 import { detectHost } from './shared/collectors/identity'
 import { ingestEvents, replayPending } from './shared/collectors/ingest-event'
 import type { CollectorEvent, Host } from './shared/collectors/types'
@@ -29,7 +30,7 @@ cli
   .option('--transcript-path <path>', 'Path to JSONL transcript (disk-path mode)')
   .option('--agent-name <name>', 'Agent name for disk-path mode', { default: 'claude' })
   .option('--raw', 'Read pre-parsed ParsedSessionData JSON from stdin')
-  .option('--hook <host>', 'Read native cursor, grok, kimi, zcode, or auto hook JSON from stdin')
+  .option('--hook <host>', 'Read native cursor, grok, kimi, zcode, antigravity, or auto hook JSON from stdin')
   .option('--replay-pending', 'Replay durable collector events')
   .option('--detect-host', 'Print cursor, grok, kimi, zcode, or legacy for hook JSON on stdin')
   .action(async (options: {
@@ -148,6 +149,7 @@ function hydrate(events: readonly CollectorEvent[]): Promise<readonly CollectorE
 
 async function parseHook(host: Host, input: unknown): Promise<CollectorEvent[]> {
   const observedAt = Date.now()
+  if (host === 'antigravity') return parseAntigravityHook(input, observedAt)
   if (host === 'zcode') return parseZcodeHook(input, observedAt)
   if (host === 'kimi') return parseKimiHook(input, observedAt)
   return host === 'cursor'
@@ -172,8 +174,8 @@ async function withCollectorWriter(
 }
 
 async function runHookMode(requestedHost: string): Promise<void> {
-  if (!['cursor', 'grok', 'kimi', 'zcode', 'auto'].includes(requestedHost)) {
-    fail('--hook must be cursor, grok, kimi, zcode, or auto')
+  if (!['cursor', 'grok', 'kimi', 'zcode', 'antigravity', 'auto'].includes(requestedHost)) {
+    fail('--hook must be cursor, grok, kimi, zcode, antigravity, or auto')
   }
   const input = await readJsonStdin('--hook')
   const host = requestedHost === 'auto'
@@ -181,10 +183,14 @@ async function runHookMode(requestedHost: string): Promise<void> {
     : requestedHost as Host
   if (!host) fail('unable to detect native hook host')
   const events = await parseHook(host, input)
-  if (events.length === 0) fail(`invalid ${host} hook payload`)
-  await withCollectorWriter(async write => {
-    await ingestEvents(events, { home: collectorHome(), hydrate, write })
-  })
+  if (events.length > 0) {
+    await withCollectorWriter(async write => {
+      await ingestEvents(events, { home: collectorHome(), hydrate, write })
+    })
+  } else if (host !== 'antigravity') {
+    fail(`invalid ${host} hook payload`)
+  }
+  if (host === 'antigravity') process.stdout.write('{}\n')
 }
 
 async function runReplayMode(): Promise<void> {

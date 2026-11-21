@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -447,6 +447,65 @@ describe('Kimi App repository installation', () => {
       const result = execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e',
         'import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync(process.argv[1]); console.log(JSON.stringify(db.prepare("SELECT session_id,agent_name,turns FROM sessions").all())); db.close()', path.join(env.OHMYC_HOME, 'timeline.db')], { encoding: 'utf8' })
       expect(JSON.parse(result)).toEqual([{ session_id: 'kimi:app-install', agent_name: 'kimi', turns: 1 }])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('Antigravity plugin installation', () => {
+  it('records native turns, deduplicates tool callbacks, and preserves unavailable token status', () => {
+    const pluginRoot = path.resolve(import.meta.dirname, '../..')
+    const manifest = JSON.parse(readFileSync(path.join(pluginRoot, '.antigravity-plugin/plugin.json'), 'utf8'))
+    const pkg = JSON.parse(readFileSync(path.join(pluginRoot, 'package.json'), 'utf8'))
+    expect(manifest.version).toBe(pkg.version)
+    expect(pkg.files).toEqual(expect.arrayContaining(['.antigravity-plugin', 'hooks.json', 'dist']))
+    const config = JSON.parse(readFileSync(path.join(pluginRoot, 'hooks.json'), 'utf8'))['ohmyc-timeline']
+    const root = mkdtempSync(path.join(os.tmpdir(), 'antigravity install '))
+    const installRoot = path.join(root, 'plugin root')
+    const env = { ...process.env, OHMYC_HOME: path.join(root, 'ohmyc') }
+
+    try {
+      cpSync(path.join(pluginRoot, 'dist'), path.join(installRoot, 'dist'), { recursive: true })
+      const transcriptPath = path.join(root, 'transcript.jsonl')
+      const input = { conversationId: 'installed', workspacePaths: ['/tmp/project'], transcriptPath, modelName: 'gemini' }
+      const hook = (command: string, payload: object) => {
+        const stdout = execFileSync('sh', ['-c', command], {
+          cwd: installRoot, env, input: JSON.stringify({ ...input, ...payload }), encoding: 'utf8',
+        })
+        expect(JSON.parse(stdout)).toEqual({})
+      }
+      const stop = config.Stop[0].command
+      const tool = config.PostToolUse[0].hooks[0].command
+      const writeTranscript = (...prompts: string[]) => writeFileSync(transcriptPath, prompts.map((content, step) =>
+        JSON.stringify({
+          type: 'USER_INPUT', source: 'USER_EXPLICIT', status: 'DONE', content,
+          step_index: step * 3, created_at: new Date(Date.UTC(2026, 10, 14, 12, step)).toISOString(),
+        })).join('\n') + '\n')
+      const stopPayload = { hookEventName: 'Stop', terminationReason: 'model_stop', fullyIdle: true }
+      writeTranscript('First prompt')
+      hook(stop, { ...stopPayload, terminationReason: 'ERROR' })
+      expect(existsSync(path.join(env.OHMYC_HOME, 'timeline.db'))).toBe(false)
+      hook(stop, stopPayload)
+      writeTranscript('First prompt', 'Second prompt')
+      const toolPayload = {
+        hookEventName: 'PostToolUse', stepIdx: 4,
+        toolCall: { name: 'view_file', args: { AbsolutePath: '/tmp/project/skills/demo/SKILL.md', IsSkillFile: true } },
+      }
+      hook(tool, toolPayload)
+      hook(tool, toolPayload)
+      hook(stop, stopPayload)
+      hook(stop, stopPayload)
+
+      const result = execFileSync(process.execPath, ['--no-warnings', '--input-type=module', '-e',
+        'import { DatabaseSync } from "node:sqlite"; const db = new DatabaseSync(process.argv[1]); console.log(JSON.stringify([db.prepare("SELECT session_id, agent_name, project, model, turns, summary, token_status FROM sessions").all(), db.prepare("SELECT tool_name, call_count FROM session_tools").all(), db.prepare("SELECT skill_name FROM session_skills").all()])); db.close()',
+        path.join(env.OHMYC_HOME, 'timeline.db'),
+      ], { encoding: 'utf8' })
+      expect(JSON.parse(result)).toEqual([
+        [{ session_id: 'antigravity:installed', agent_name: 'antigravity', project: '/tmp/project', model: 'gemini', turns: 2, summary: 'First prompt', token_status: 'unavailable' }],
+        [{ tool_name: 'view_file', call_count: 1 }],
+        [{ skill_name: 'demo' }],
+      ])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

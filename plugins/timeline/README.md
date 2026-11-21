@@ -5,7 +5,7 @@
 [![Bun](https://img.shields.io/badge/bun-1.3.12-000000?style=flat-square&logo=bun)](.github/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](package.json)
 
-Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **Grok Build**, **Kimi Code CLI**, **ZCode**, and **OpenCode** and ingests it into the OhMyC Timeline dashboard.
+Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **Grok Build**, **Kimi Code CLI**, **ZCode**, **OpenCode**, and **Antigravity** and ingests it into the OhMyC Timeline dashboard.
 
 ## Supported Agents
 
@@ -17,6 +17,7 @@ Collects local session data from **Claude Code**, **Codex**, **Cursor CLI**, **G
 | Grok Build | Native Grok plugin hooks | Hook events and the matching session files under `$GROK_HOME/sessions/` |
 | Kimi Code CLI | Native Kimi plugin hooks | Session index, metadata, and main-agent wire records under `$KIMI_CODE_HOME` |
 | ZCode | Native ZCode plugin hooks | Native turn and tool IDs; temporary per-hook transcript when needed |
+| Antigravity | Native Antigravity plugin hooks | User turns from the transcript, plus completed tool callbacks |
 | OpenCode | OpenCode plugin entry at `opencode.ts` | Real-time OpenCode lifecycle, message, and tool events |
 
 Cursor CLI `2026.09.10-fd3934a` verified local custom-manifest hook loading,
@@ -28,13 +29,13 @@ are tested versions, not claimed minimum versions.
 
 ## Requirements
 
-- Node.js 22 or later for the Claude Code, Codex, Cursor, Grok, Kimi, and ZCode hook
+- Node.js 22 or later for the Claude Code, Codex, Cursor, Grok, Kimi, ZCode, and Antigravity hook
   runtimes. If `node` is unavailable, native hooks fail open and cannot record
   the event.
 - Bun 1.3.x when building from source or running the development test suite.
 - `jq` is optional. Hook scripts use it for a faster transcript parse and fall back to Node when it is unavailable.
-- One supported host: Claude Code, Codex, Cursor CLI, Grok Build, Kimi Code CLI, ZCode, or OpenCode.
-- Cursor and ZCode record token status as unavailable; Grok records complete or partial
+- One supported host: Claude Code, Codex, Cursor CLI, Grok Build, Kimi Code CLI, ZCode, OpenCode, or Antigravity.
+- Cursor, ZCode, and Antigravity record token status as unavailable; Grok records complete or partial
   usage only when its validated session usage file provides it. This integration
   preserves the existing OhMyC UI; numeric displays may show zero for unavailable
   usage. The stored token status distinguishes it from measured zero.
@@ -220,6 +221,26 @@ ZCode-specific hook file registers only the other supported events.
 
 Official [ZCode hooks documentation](https://zcode.z.ai/en/docs/hooks) and
 [plugin documentation](https://zcode.z.ai/en/docs/plugin).
+
+### Google Antigravity
+
+With Node.js 22 or later on the host's PATH, install from a checkout of this
+repository:
+
+```bash
+agy plugin install ./plugins/timeline
+```
+
+For manual installation in the App or IDE, copy the `plugins/timeline` folder
+into `.agents/plugins/` in your workspace or `~/.gemini/config/plugins/` for
+all workspaces. Start a new conversation after installing.
+
+Timeline records Antigravity project, model, user turns, tool calls, and
+skill reads. Token usage is recorded as unavailable. The native plugin and
+Stop callback were verified with Antigravity CLI 1.5.9.
+
+See the [Antigravity plugin docs](https://antigravity.google/docs/plugins) and
+[hook docs](https://antigravity.google/docs/hooks).
 
 ## Configuration
 
