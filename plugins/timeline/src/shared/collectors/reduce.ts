@@ -63,6 +63,9 @@ export function toSnapshot(state: CollectorState): ParsedSessionData | null {
     if (event.tool || (rootEvent(event) && (event.confirmsTurn || event.usage))) {
       hasActivity = true
     }
+    for (const skill of event.skills ?? []) {
+      if (hasText(skill)) skills.add(skill)
+    }
     if (event.tool) {
       const source = event.sourceSessionId ?? event.nativeSessionId
       const key = JSON.stringify([source, event.turnId ?? '', event.tool.id])

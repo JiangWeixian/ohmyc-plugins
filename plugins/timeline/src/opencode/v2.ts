@@ -43,6 +43,18 @@ function normalizeMessages(messages: Message[]): HydratedSessionNode['messages']
   })
 }
 
+function messageSkillNames(message: Message): string[] {
+  if (message.type === 'skill') return [message.name]
+  if (message.type === 'user') return message.skills?.map(skill => skill.name) ?? []
+  if (message.type !== 'assistant') return []
+  return message.content.flatMap(part => {
+    if (part.type !== 'tool' || part.name !== 'skill' || part.state.status !== 'completed') return []
+    const input = part.state.input
+    return input && typeof input === 'object' && 'id' in input
+      && typeof input.id === 'string' && input.id.trim() ? [input.id] : []
+  })
+}
+
 export function createOpenCodeV2Runtime(
   ctx: Context,
   deps: { writeTree: (tree: HydratedSessionNode) => Promise<void>; hasExistingSession: (id: string) => boolean; log: Log },
@@ -93,7 +105,7 @@ export function createOpenCodeV2Runtime(
       for (const message of normalizeMessages(context)) messages.set(message.info.id, message)
       const skillMessages = new Map((previous?.skillMessages ?? []).filter(message => retain(message.id)).map(message => [message.id, message]))
       for (const message of context) {
-        const names = message.type === 'skill' ? [message.name] : message.type === 'user' ? message.skills?.map(skill => skill.name) ?? [] : []
+        const names = messageSkillNames(message)
         if (names.length) skillMessages.set(message.id, { id: message.id, names })
       }
       const snapshot: Snapshot = {

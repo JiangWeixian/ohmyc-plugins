@@ -10,6 +10,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import type { ParsedSessionData } from '@ohmyc/timeline/schema'
+import { codexReadSkills } from './agents/codex/skill'
 import { parseCursorHook } from './agents/cursor/hooks'
 import { hydrateCursor } from './agents/cursor/transcript'
 import { parseGrokHook } from './agents/grok/hooks'
@@ -80,10 +81,17 @@ cli.parse()
 async function runDiskMode(sessionId: string, transcriptPath: string, agentName: string): Promise<void> {
   const db = openDatabase()
   try {
-    createWriter(db).writeSession(parseTranscript(sessionId, transcriptPath, { agentName }))
+    const parsed = parseTranscript(sessionId, transcriptPath, { agentName })
+    if (agentName === 'codex') addCodexReadSkills(parsed)
+    createWriter(db).writeSession(parsed)
   } finally {
     closeDatabase(db)
   }
+}
+
+function addCodexReadSkills(data: ParsedSessionData): void {
+  const skills = codexReadSkills(data.transcriptPath)
+  if (skills.length) data.skills = [...new Set([...(data.skills ?? []), ...skills])]
 }
 
 const transcriptUsageAgents = new Set(['claude', 'claude-cli', 'codex'])
@@ -97,6 +105,7 @@ function applyTranscriptUsage(data: ParsedSessionData): void {
     data.tokensOutput = parsed.tokensOutput
     data.tokensCached = parsed.tokensCached
     data.usageDetails = parsed.usageDetails
+    if (agentName === 'codex') addCodexReadSkills(data)
   } catch {
     data.usageDetails = { events: [], status: 'unavailable' }
   }

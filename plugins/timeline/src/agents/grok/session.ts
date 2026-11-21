@@ -1,5 +1,6 @@
 import { readdir, readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
+import { grokAttachedSkills } from './skill'
 import { eventKey } from '../../shared/collectors/identity'
 import type { CollectorEvent, Usage } from '../../shared/collectors/types'
 
@@ -315,6 +316,13 @@ export async function hydrateGrok(
 
   const usage = await readUsage(summary)
   const output: CollectorEvent[] = [metadataEvent(summary, usage, exemplar)]
+  if (grokEvents.some(item => item.prompt?.trimStart().startsWith('/'))) {
+    const history = await stableRead(path.join(summary.directory, 'chat_history.jsonl'))
+    const skills = grokAttachedSkills(history?.raw ?? '')
+    if (skills.length) output.push(event({
+      version: 1, agent: 'grok', nativeSessionId: summary.id, skills,
+    }, exemplar.observedAt))
+  }
   if (!usage || usage.usage.status === 'partial') return output
   for (const request of requests) {
     if (request.turnId && request.sourceAt !== undefined

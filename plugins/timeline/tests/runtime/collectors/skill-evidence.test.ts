@@ -131,3 +131,51 @@ describe('native skill read evidence', () => {
       .toMatchObject({ skills: ['inspect'], tools: [{ toolName: 'Read', callCount: 3 }] })
   })
 })
+
+describe('native skill attachments', () => {
+  it('records Cursor transcript attachments without adding tool calls', async () => {
+    const root = await home()
+    const transcript = path.join(root, 'transcript.jsonl')
+    const text = [
+      '<manually_attached_skills>', 'The user has manually attached the following skills to their message.',
+      'Skill Name: inspect', `Path: ${skillPath}`, 'SKILL.md content:', '# Inspect',
+      '</manually_attached_skills>', '<user_query>', '/inspect', '</user_query>',
+    ].join('\n')
+    const rows = [text, 'Mention /other'].flatMap(prompt => [
+      { role: 'user', message: { content: [{ type: 'text', text: prompt === text ? text : `<user_query>${prompt}</user_query>` }] } },
+      { role: 'assistant', message: { content: 'Done' } },
+    ])
+    await writeFile(transcript, rows.map(row => JSON.stringify(row)).join('\n') + '\n')
+    const snapshots: ParsedSessionData[] = []
+    const deps = { home: root, hydrate: hydrateCursor, write: (data: ParsedSessionData) => { snapshots.push(data) } }
+    await ingestEvents(parseCursorHook({
+      conversation_id: 'c1', hook_event_name: 'sessionEnd', is_background_agent: false,
+      transcript_path: transcript,
+    }, 1), deps)
+    expect(snapshots.at(-1)).toMatchObject({ skills: ['inspect'], tools: [], turns: 2 })
+  })
+
+  it('hydrates invoked Grok skills from chat history without adding tool calls', async () => {
+    const root = await home()
+    const directory = path.join(root, 'sessions', 'project', 'g1')
+    await mkdir(directory, { recursive: true })
+    await writeFile(path.join(directory, 'summary.json'), JSON.stringify({ info: { id: 'g1' }, chat_format_version: 1 }))
+    const content = [
+      '<user_query>', '/inspect', '</user_query>', '<skill_information>', '<skills_referenced>',
+      `<skill name="inspect" path="${skillPath}"/>`, '</skills_referenced>',
+      '<skill name="inspect">', '# Inspect', '</skill>', '</skill_information>',
+    ].join('\n')
+    const rows = [
+      { type: 'user', content: [{ type: 'text', text: content }] },
+      { type: 'user', content: [{ type: 'text', text: '<user_query>\n/not-a-skill\n</user_query>' }] },
+    ]
+    await writeFile(path.join(directory, 'chat_history.jsonl'), rows.map(row => JSON.stringify(row)).join('\n') + '\n')
+    const events = [
+      ...parseGrokHook({ sessionId: 'g1', hookEventName: 'user_prompt_submit', promptId: 'p1', prompt: '/inspect' }, 1),
+      ...parseGrokHook({ sessionId: 'g1', hookEventName: 'stop', promptId: 'p1' }, 2),
+    ]
+    const hydrated = await hydrateGrok(events, root)
+    expect(toSnapshot(reduceEvents(null, [...events, ...hydrated])))
+      .toMatchObject({ skills: ['inspect'], tools: [], turns: 1 })
+  })
+})

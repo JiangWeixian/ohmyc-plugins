@@ -90,6 +90,36 @@ describe('dist/ingest.mjs (node entry)', () => {
     expect(row?.turns).toBe(1)
   })
 
+  it.each([false, true])('records successful Codex command reads with raw input: %s', raw => {
+    const completion = (status: string, exitCode: number, name: string, type = 'read') => ({
+      type: 'event_msg', timestamp: '2026-06-12T14:05:25.000Z',
+      payload: { type: 'item_completed', item: {
+        type: 'CommandExecution', status, exit_code: exitCode,
+        parsed_cmd: [{ type, path: `.agents/skills/${name}/SKILL.md` }],
+      } },
+    })
+    writeFileSync(transcriptPath, [
+      { type: 'session_meta', timestamp: '2026-06-12T14:05:24.000Z', payload: { cwd: '/tmp/project' } },
+      completion('completed', 0, 'read-skill'),
+      completion('failed', 1, 'missing-skill'),
+      completion('completed', 0, 'search-only', 'search'),
+    ].map(row => JSON.stringify(row)).join('\n') + '\n')
+    const sessionId = 'codex-skill'
+    const result = raw
+      ? run(['--raw'], JSON.stringify({
+        sessionId, transcriptPath, agentName: 'codex', project: '/tmp/project',
+        startedAt: 1, endedAt: 2, durationMs: 1, turns: 1, model: null,
+        summary: 'Read a skill', summarySource: 'first_message',
+        fileSize: 0, tools: [], skills: ['attached-skill'],
+      }))
+      : run(['--session-id', sessionId, '--transcript-path', transcriptPath, '--agent-name', 'codex'])
+    expect(result.status, result.stderr).toBe(0)
+    const skills = readDb(db => db.prepare(
+      'SELECT skill_name FROM session_skills WHERE session_id = ? ORDER BY skill_name',
+    ).all(sessionId)).map(row => row.skill_name)
+    expect(skills).toEqual(raw ? ['attached-skill', 'read-skill'] : ['read-skill'])
+  })
+
   it('ingests Codex transcripts from disk via --agent-name codex', () => {
     const codexTranscript = [
       '{"timestamp":"2026-06-12T14:05:24.091Z","type":"session_meta","payload":{"id":"codex-session-001","timestamp":"2026-06-12T14:04:08.529Z","cwd":"/tmp/codex-project","originator":"Codex Desktop"}}',

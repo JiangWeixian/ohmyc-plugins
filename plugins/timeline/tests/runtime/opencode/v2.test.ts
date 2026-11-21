@@ -63,6 +63,19 @@ describe('OpenCode v2 collection', () => {
     })
   })
 
+  it('records a completed v2 Skill tool id and ignores failed calls', async () => {
+    const f = fixture()
+    const skill = (id: string, status: string) => ({
+      type: 'tool', id, name: 'skill', state: { status, input: { id } },
+    })
+    f.contexts.root[1].content.push(skill('review', 'completed'), skill('missing', 'error'))
+    await f.event()
+    expect(f.trees.at(-1).skills).toEqual(['review'])
+    f.contexts.root.pop()
+    await f.event('session.revert.committed')
+    expect(f.trees.at(-1).skills).toEqual([])
+  })
+
   it('retains messages through observed compaction and plugin restart without double counting', async () => {
     const f = fixture()
     await f.event()

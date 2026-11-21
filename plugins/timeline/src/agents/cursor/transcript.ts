@@ -28,6 +28,13 @@ function nativeUserQuery(value: string): string | undefined {
   return query ? query : undefined
 }
 
+function attachedSkillNames(content: string): string[] {
+  const block = /^<manually_attached_skills>\r?\n([\s\S]*?)\r?\n<\/manually_attached_skills>/.exec(content)
+  if (!block) return []
+  return [...block[1].matchAll(/^Skill Name: ([^\r\n]+)\r?\nPath: [^\r\n]+\/SKILL\.md\r?$/gm)]
+    .map(match => match[1].trim()).filter(Boolean)
+}
+
 function event(semantic: SemanticEvent, observedAt: number): CollectorEvent {
   return { ...semantic, eventId: eventKey(semantic), observedAt }
 }
@@ -36,6 +43,7 @@ type TranscriptTurn = {
   prompt: string
   ordinal: number
   hasAssistantActivity: boolean
+  skills: string[]
   tools: { id: string, name: string, skill?: string }[]
 }
 
@@ -110,7 +118,7 @@ async function readTranscript(transcriptPath: string): Promise<Transcript | null
       }
       const ordinal = occurrences.get(prompt) ?? 0
       occurrences.set(prompt, ordinal + 1)
-      current = { prompt, ordinal, hasAssistantActivity: false, tools: [] }
+      current = { prompt, ordinal, hasAssistantActivity: false, skills: attachedSkillNames(content), tools: [] }
       turns.push(current)
     } else if (role === 'assistant' && current) {
       const hasTool = blocks.some(block => object(block)?.type === 'tool_use')
@@ -164,8 +172,8 @@ export async function hydrateCursor(
   const exemplar = cursorEvents[0]
   const hookToolIds = new Set(cursorEvents.flatMap(item => item.tool ? [item.tool.id] : []))
 
+  const transcript = loaded.values().next().value
   if (!reliableHookTurns) {
-    const transcript = loaded.values().next().value as Transcript | undefined
     for (const turn of transcript?.turns ?? []) {
       if (!turn.hasAssistantActivity) continue
       const id = turnId(turn.prompt, turn.ordinal)
@@ -187,8 +195,8 @@ export async function hydrateCursor(
     }
   }
 
-  if (loaded.size > 0) {
-    const transcript = loaded.values().next().value as Transcript
+  if (transcript) {
+    const skills = [...new Set(transcript.turns.filter(turn => turn.hasAssistantActivity).flatMap(turn => turn.skills))]
     output.push(event({
       version: 1,
       agent: 'cursor',
@@ -197,6 +205,7 @@ export async function hydrateCursor(
       model: exemplar.model,
       transcriptPath: exemplar.transcriptPath,
       fileSize: transcript.fileSize,
+      ...(skills.length ? { skills } : {}),
       usage: { input: 0, output: 0, cached: 0, status: 'unavailable' },
       unresolvedParent: unresolvedContext ? true : undefined,
     }, observedAt))
