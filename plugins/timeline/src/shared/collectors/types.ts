@@ -23,6 +23,7 @@ export type CollectorEvent = {
   turnId?: string
   prompt?: string
   confirmsTurn?: boolean
+  skills?: string[]
   tool?: {
     id: string
     name: string

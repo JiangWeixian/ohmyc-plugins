@@ -235,9 +235,9 @@ For manual installation in the App or IDE, copy the `plugins/timeline` folder
 into `.agents/plugins/` in your workspace or `~/.gemini/config/plugins/` for
 all workspaces. Start a new conversation after installing.
 
-Timeline records Antigravity project, model, user turns, tool calls, and
-skill reads. Token usage is recorded as unavailable. The native plugin and
-Stop callback were verified with Antigravity CLI 1.5.9.
+Timeline records Antigravity project, model, user turns, tool calls, and invoked
+Skills. Skill collection uses explicit slash command metadata and successful
+`SKILL.md` reads. Token usage is recorded as unavailable.
 
 See the [Antigravity plugin docs](https://antigravity.google/docs/plugins) and
 [hook docs](https://antigravity.google/docs/hooks).

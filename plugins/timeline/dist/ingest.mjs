@@ -2427,6 +2427,15 @@ function text6(value) {
 function isStepIndex(value) {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
+function promptDetails(content) {
+  const request = /^<USER_REQUEST>\r?\n([\s\S]*?)\r?\n<\/USER_REQUEST>/.exec(content);
+  if (!request) return { prompt: content };
+  const metadata = /^\r?\n<ADDITIONAL_METADATA>\r?\n([\s\S]*?)\r?\n<\/ADDITIONAL_METADATA>/.exec(content.slice(request[0].length));
+  const skills = metadata ? [...metadata[1].matchAll(
+    /^<SKILL>The user has explicitly invoked the \(([^()\r\n]+)\) skill\./gm
+  )].map((match) => match[1]) : [];
+  return { prompt: request[1], ...skills.length ? { skills } : {} };
+}
 async function parseAntigravityHook(input, observedAt) {
   const hook = object10(input);
   const nativeSessionId = text6(hook?.conversationId);
@@ -2448,7 +2457,8 @@ async function parseAntigravityHook(input, observedAt) {
     const name = text6(call?.name);
     if (!name || !isStepIndex(hook.stepIdx)) return [];
     const args = object10(call?.args);
-    const skill = !text6(hook.error) && name === "view_file" && args?.IsSkillFile === true ? skillFromReadPaths(args.AbsolutePath, args.AbsolutePath) : void 0;
+    const file = name === "read_file" ? args?.Path : name === "view_file" && args?.IsSkillFile === true ? args.AbsolutePath : void 0;
+    const skill = text6(hook.error) ? void 0 : skillFromReadPaths(file, file);
     return [makeEvent({ tool: { id: String(hook.stepIdx), name, skill } })];
   }
   if (hook.hookEventName !== "Stop" || text6(hook.terminationReason)?.toLowerCase() === "error" || text6(hook.error)) return [];
@@ -2467,12 +2477,15 @@ async function parseAntigravityHook(input, observedAt) {
       continue;
     }
     if (step?.type !== "USER_INPUT" || step.source !== "USER_EXPLICIT" || step.status !== "DONE") continue;
-    const prompt = text6(step.content);
-    if (!prompt || !isStepIndex(step.step_index)) continue;
+    const content = text6(step.content);
+    if (!content || !isStepIndex(step.step_index)) continue;
+    const { prompt, skills } = promptDetails(content);
+    if (!text6(prompt)) continue;
     const sourceAt = Date.parse(text6(step.created_at) ?? "");
     events.push(makeEvent({
       turnId: String(step.step_index),
       prompt: prompt.slice(0, 140),
+      ...skills ? { skills } : {},
       confirmsTurn: true,
       ...Number.isFinite(sourceAt) && sourceAt >= 0 ? { sourceAt } : {}
     }));
@@ -2519,6 +2532,7 @@ function validEvent(value, key, id) {
   for (const field of ["rootSession", "unresolvedParent", "confirmsTurn", "needsHydration"]) {
     if (data[field] !== void 0 && typeof data[field] !== "boolean") return false;
   }
+  if (data.skills !== void 0 && (!Array.isArray(data.skills) || !data.skills.every((skill) => typeof skill === "string"))) return false;
   if (data.tool !== void 0) {
     const tool = object11(data.tool);
     if (!tool || typeof tool.id !== "string" || !tool.id || typeof tool.name !== "string" || !tool.name || tool.skill !== void 0 && typeof tool.skill !== "string") return false;
@@ -2592,6 +2606,9 @@ function toSnapshot(state) {
     if (rootEvent(event3) && event3.turnId && event3.confirmsTurn) confirmed.add(event3.turnId);
     if (event3.tool || rootEvent(event3) && (event3.confirmsTurn || event3.usage)) {
       hasActivity = true;
+    }
+    for (const skill of event3.skills ?? []) {
+      if (hasText2(skill)) skills.add(skill);
     }
     if (event3.tool) {
       const source = event3.sourceSessionId ?? event3.nativeSessionId;
