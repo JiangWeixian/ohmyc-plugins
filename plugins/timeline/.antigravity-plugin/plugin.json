@@ -3,6 +3,6 @@
   "name": "ohmyc-timeline",
   "displayName": "OhMyC Timeline",
   "description": "Record local Antigravity session activity in OhMyC Timeline.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "logo": "assets/icon.png"
 }
