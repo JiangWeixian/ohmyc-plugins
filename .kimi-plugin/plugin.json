@@ -1,6 +1,6 @@
 {
   "name": "timeline",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Collect local Kimi Code sessions for OhMyC Timeline",
   "hooks": [
     {

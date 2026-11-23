@@ -1,5 +1,11 @@
 # @ohmyc/timeline-plugin
 
+## 2.1.0
+
+### Minor Changes
+
+- 7f9fa71: Add a native Google Antigravity plugin that records sessions, turns, tools, and invoked Skills in OhMyC Timeline.
+
 ## 2.0.0
 
 ### Major Changes
