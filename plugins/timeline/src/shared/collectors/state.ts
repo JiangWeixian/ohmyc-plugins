@@ -1,6 +1,6 @@
 import type { CollectorEvent, CollectorState, Host } from './types'
 
-const HOSTS: readonly string[] = ['cursor', 'grok', 'kimi', 'zcode']
+const HOSTS: readonly string[] = ['cursor', 'grok', 'kimi', 'zcode', 'antigravity']
 export const HEX_HASH = /^[a-f0-9]{64}$/
 
 export function hostOf(key: string): Host | undefined {
@@ -32,6 +32,8 @@ export function validEvent(value: unknown, key: string, id: string): value is Co
   for (const field of ['rootSession', 'unresolvedParent', 'confirmsTurn', 'needsHydration']) {
     if (data[field] !== undefined && typeof data[field] !== 'boolean') return false
   }
+  if (data.skills !== undefined
+    && (!Array.isArray(data.skills) || !data.skills.every(skill => typeof skill === 'string'))) return false
   if (data.tool !== undefined) {
     const tool = object(data.tool)
     if (!tool || typeof tool.id !== 'string' || !tool.id || typeof tool.name !== 'string' || !tool.name

@@ -1,0 +1,21 @@
+{
+  "ohmyc-timeline": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "command": "node --no-warnings ./dist/ingest.mjs --hook antigravity",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "command": "node --no-warnings ./dist/ingest.mjs --hook antigravity",
+        "timeout": 5
+      }
+    ]
+  }
+}

@@ -412,14 +412,14 @@ function parseCodexTranscript(sessionId, transcriptPath) {
       continue;
     }
     if (payload.type === "message" && payload.role === "user") {
-      const text6 = extractCodexMessageText(payload.content);
-      if (text6) {
-        for (const skillName of extractCodexSkillNames(text6)) {
+      const text7 = extractCodexMessageText(payload.content);
+      if (text7) {
+        for (const skillName of extractCodexSkillNames(text7)) {
           skills.add(skillName);
         }
-        if (!isCodexSkillInjection(text6)) {
+        if (!isCodexSkillInjection(text7)) {
           turns++;
-          firstUserMessage ??= text6;
+          firstUserMessage ??= text7;
         }
       }
     }
@@ -505,7 +505,7 @@ function extractCodexMessageText(content) {
   if (!Array.isArray(content)) {
     return null;
   }
-  const text6 = content.map((part) => {
+  const text7 = content.map((part) => {
     if (!part || typeof part !== "object") {
       return "";
     }
@@ -515,13 +515,13 @@ function extractCodexMessageText(content) {
     }
     return "";
   }).filter(Boolean).join("\n").trim();
-  return text6 || null;
+  return text7 || null;
 }
-function extractCodexSkillNames(text6) {
-  return [...text6.matchAll(/<skill\b[^>]*>[\s\S]*?<name>([^<]+)<\/name>[\s\S]*?<\/skill>/g)].map((match) => match[1]?.trim()).filter(Boolean);
+function extractCodexSkillNames(text7) {
+  return [...text7.matchAll(/<skill\b[^>]*>[\s\S]*?<name>([^<]+)<\/name>[\s\S]*?<\/skill>/g)].map((match) => match[1]?.trim()).filter(Boolean);
 }
-function isCodexSkillInjection(text6) {
-  const trimmed = text6.trim();
+function isCodexSkillInjection(text7) {
+  const trimmed = text7.trim();
   return trimmed.startsWith("<skill>") && trimmed.endsWith("</skill>") && extractCodexSkillNames(trimmed).length > 0;
 }
 function extractCodexSkillNameFromCommandArguments(argumentsValue) {
@@ -1014,8 +1014,8 @@ var Command = class {
     this.args = findAllBrackets(rawName);
     this.examples = [];
   }
-  usage(text6) {
-    this.usageText = text6;
+  usage(text7) {
+    this.usageText = text7;
     return this;
   }
   allowUnknownOptions() {
@@ -1179,8 +1179,8 @@ var CAC = class extends EventEmitter {
     this.globalCommand = new GlobalCommand(this);
     this.globalCommand.usage("<command> [options]");
   }
-  usage(text6) {
-    this.globalCommand.usage(text6);
+  usage(text7) {
+    this.globalCommand.usage(text7);
     return this;
   }
   command(rawName, description, config) {
@@ -1358,8 +1358,8 @@ var CAC = class extends EventEmitter {
 var cac = (name = "") => new CAC(name);
 
 // src/ingest.ts
-import os3 from "os";
-import path10 from "path";
+import os4 from "os";
+import path11 from "path";
 
 // src/shared/collectors/skill.ts
 import path3 from "path";
@@ -2414,27 +2414,114 @@ async function hydrateKimi(events, home) {
   return enriched;
 }
 
+// src/agents/antigravity/hooks.ts
+import { readFile as readFile5 } from "fs/promises";
+import os3 from "os";
+import path8 from "path";
+function object10(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function text6(value) {
+  return typeof value === "string" && value.trim() ? value : void 0;
+}
+function isStepIndex(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+}
+function promptDetails(content) {
+  const request = /^<USER_REQUEST>\r?\n([\s\S]*?)\r?\n<\/USER_REQUEST>/.exec(content);
+  if (!request) return { prompt: content };
+  const metadata = /^\r?\n<ADDITIONAL_METADATA>\r?\n([\s\S]*?)\r?\n<\/ADDITIONAL_METADATA>/.exec(content.slice(request[0].length));
+  const skills = metadata ? [...metadata[1].matchAll(
+    /^<SKILL>The user has explicitly invoked the \(([^()\r\n]+)\) skill\./gm
+  )].map((match) => match[1]) : [];
+  return { prompt: request[1], ...skills.length ? { skills } : {} };
+}
+async function parseAntigravityHook(input, observedAt) {
+  const hook = object10(input);
+  const nativeSessionId = text6(hook?.conversationId);
+  if (!hook || !nativeSessionId) return [];
+  const workspace = Array.isArray(hook.workspacePaths) ? hook.workspacePaths.find(text6) : void 0;
+  const base = {
+    version: 1,
+    agent: "antigravity",
+    nativeSessionId,
+    project: text6(workspace) ?? text6(hook.cwd),
+    model: text6(hook.modelName)
+  };
+  const makeEvent = (facts) => {
+    const event3 = { ...base, ...facts };
+    return { ...event3, eventId: eventKey(event3), observedAt };
+  };
+  if (hook.hookEventName === "PostToolUse") {
+    const call = object10(hook.toolCall);
+    const name = text6(call?.name);
+    if (!name || !isStepIndex(hook.stepIdx)) return [];
+    const args = object10(call?.args);
+    const file = name === "read_file" ? args?.Path : name === "view_file" && args?.IsSkillFile === true ? args.AbsolutePath : void 0;
+    const skill = text6(hook.error) ? void 0 : skillFromReadPaths(file, file);
+    return [makeEvent({ tool: { id: String(hook.stepIdx), name, skill } })];
+  }
+  if (hook.hookEventName !== "Stop" || text6(hook.terminationReason)?.toLowerCase() === "error" || text6(hook.error)) return [];
+  const suppliedPath = text6(hook.transcriptPath);
+  if (!suppliedPath) return [];
+  const transcriptPath = suppliedPath.startsWith("~/") ? path8.join(os3.homedir(), suppliedPath.slice(2)) : suppliedPath;
+  if (!path8.isAbsolute(transcriptPath)) return [];
+  const raw = await readFile5(transcriptPath, "utf8").catch(() => "");
+  const events = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let step;
+    try {
+      step = object10(JSON.parse(line));
+    } catch {
+      continue;
+    }
+    if (step?.type !== "USER_INPUT" || step.source !== "USER_EXPLICIT" || step.status !== "DONE") continue;
+    const content = text6(step.content);
+    if (!content || !isStepIndex(step.step_index)) continue;
+    const { prompt, skills } = promptDetails(content);
+    if (!text6(prompt)) continue;
+    const sourceAt = Date.parse(text6(step.created_at) ?? "");
+    events.push(makeEvent({
+      turnId: String(step.step_index),
+      prompt: prompt.slice(0, 140),
+      ...skills ? { skills } : {},
+      confirmsTurn: true,
+      ...Number.isFinite(sourceAt) && sourceAt >= 0 ? { sourceAt } : {}
+    }));
+  }
+  const last = events.at(-1);
+  if (!last) return [];
+  events.push(makeEvent({
+    turnId: last.turnId,
+    confirmsTurn: true,
+    transcriptPath,
+    fileSize: Buffer.byteLength(raw)
+  }));
+  return events;
+}
+
 // src/shared/collectors/journal.ts
 import { createHash as createHash3, randomUUID } from "crypto";
-import { link, mkdir, open, readdir as readdir2, readFile as readFile5, rename, unlink } from "fs/promises";
-import path8 from "path";
+import { link, mkdir, open, readdir as readdir2, readFile as readFile6, rename, unlink } from "fs/promises";
+import path9 from "path";
 
 // src/shared/collectors/state.ts
-var HOSTS = ["cursor", "grok", "kimi", "zcode"];
+var HOSTS = ["cursor", "grok", "kimi", "zcode", "antigravity"];
 var HEX_HASH = /^[a-f0-9]{64}$/;
 function hostOf(key) {
   const separator = key.indexOf(":");
   const host = key.slice(0, separator);
   return separator > 0 && separator < key.length - 1 && HOSTS.includes(host) ? host : void 0;
 }
-function object10(value) {
+function object11(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function number(value) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 function validEvent(value, key, id) {
-  const data = object10(value);
+  const data = object11(value);
   if (!data || data.version !== 1 || !hostOf(key) || data.agent !== hostOf(key) || typeof data.nativeSessionId !== "string" || `${data.agent}:${data.nativeSessionId}` !== key || data.eventId !== id || !HEX_HASH.test(id) || !number(data.observedAt)) return false;
   for (const field of ["sourceSessionId", "resolvesEventId", "turnId", "prompt", "project", "model", "title", "transcriptPath"]) {
     if (data[field] !== void 0 && typeof data[field] !== "string") return false;
@@ -2445,12 +2532,13 @@ function validEvent(value, key, id) {
   for (const field of ["rootSession", "unresolvedParent", "confirmsTurn", "needsHydration"]) {
     if (data[field] !== void 0 && typeof data[field] !== "boolean") return false;
   }
+  if (data.skills !== void 0 && (!Array.isArray(data.skills) || !data.skills.every((skill) => typeof skill === "string"))) return false;
   if (data.tool !== void 0) {
-    const tool = object10(data.tool);
+    const tool = object11(data.tool);
     if (!tool || typeof tool.id !== "string" || !tool.id || typeof tool.name !== "string" || !tool.name || tool.skill !== void 0 && typeof tool.skill !== "string") return false;
   }
   if (data.usage !== void 0) {
-    const usage = object10(data.usage);
+    const usage = object11(data.usage);
     if (!usage || ![usage.input, usage.output, usage.cached].every(number) || !["complete", "partial", "unavailable"].includes(String(usage.status))) return false;
   }
   return true;
@@ -2461,11 +2549,11 @@ var UnsupportedCollectorStateError = class extends Error {
   }
 };
 function parseState(raw, key) {
-  const state = object10(JSON.parse(raw));
+  const state = object11(JSON.parse(raw));
   if (state && (typeof state.version === "number" && state.version > 1 || typeof state.agent === "string" && !HOSTS.includes(state.agent))) {
     throw new UnsupportedCollectorStateError();
   }
-  const events = object10(state?.events);
+  const events = object11(state?.events);
   if (!state || state.version !== 1 || !hostOf(key) || state.agent !== hostOf(key) || typeof state.nativeSessionId !== "string" || `${state.agent}:${state.nativeSessionId}` !== key || !events || !Object.entries(events).every(([id, event3]) => validEvent(event3, key, id))) {
     throw new Error("invalid collector state");
   }
@@ -2518,6 +2606,9 @@ function toSnapshot(state) {
     if (rootEvent(event3) && event3.turnId && event3.confirmsTurn) confirmed.add(event3.turnId);
     if (event3.tool || rootEvent(event3) && (event3.confirmsTurn || event3.usage)) {
       hasActivity = true;
+    }
+    for (const skill of event3.skills ?? []) {
+      if (hasText2(skill)) skills.add(skill);
     }
     if (event3.tool) {
       const source = event3.sourceSessionId ?? event3.nativeSessionId;
@@ -2588,12 +2679,12 @@ function toSnapshot(state) {
 
 // src/shared/collectors/journal.ts
 function legacyDirectory(home, key) {
-  return path8.join(home, "collectors", createHash3("sha256").update(key).digest("hex"));
+  return path9.join(home, "collectors", createHash3("sha256").update(key).digest("hex"));
 }
 function collectorDirectory(home, key) {
   const host = hostOf(key);
   const legacy = legacyDirectory(home, key);
-  return host === "kimi" || host === "zcode" ? path8.join(path8.dirname(legacy), host, path8.basename(legacy)) : legacy;
+  return host === "kimi" || host === "zcode" ? path9.join(path9.dirname(legacy), host, path9.basename(legacy)) : legacy;
 }
 async function names(directory) {
   try {
@@ -2608,11 +2699,11 @@ function eventFiles(files) {
 }
 async function ensureDirectory(home, key) {
   const directory = collectorDirectory(home, key);
-  await mkdir(path8.join(directory, "outbox"), { recursive: true, mode: 448 });
+  await mkdir(path9.join(directory, "outbox"), { recursive: true, mode: 448 });
   return directory;
 }
 async function durableWrite(filePath, value) {
-  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
+  const tempPath = path9.join(path9.dirname(filePath), `.tmp-${randomUUID()}`);
   const file = await open(tempPath, "wx", 384);
   try {
     await file.writeFile(JSON.stringify(value));
@@ -2629,7 +2720,7 @@ async function durableWrite(filePath, value) {
   }
 }
 async function writeOnce(filePath, raw) {
-  const tempPath = path8.join(path8.dirname(filePath), `.tmp-${randomUUID()}`);
+  const tempPath = path9.join(path9.dirname(filePath), `.tmp-${randomUUID()}`);
   const file = await open(tempPath, "wx", 384);
   try {
     await file.writeFile(raw);
@@ -2660,7 +2751,7 @@ function createJournal(home) {
       const legacy = legacyDirectory(home, key);
       let identity;
       try {
-        identity = JSON.parse(await readFile5(path8.join(legacy, "identity.json"), "utf8"));
+        identity = JSON.parse(await readFile6(path9.join(legacy, "identity.json"), "utf8"));
       } catch (error) {
         if (error.code === "ENOENT") return;
         throw error;
@@ -2672,37 +2763,37 @@ function createJournal(home) {
       if (!stateName && quarantined.length > 0) throw new CorruptCollectorStateError(legacy);
       const directory = await ensureDirectory(home, key);
       if (stateName) {
-        const original = parseState(await readFile5(path8.join(legacy, stateName), "utf8"), key);
+        const original = parseState(await readFile6(path9.join(legacy, stateName), "utf8"), key);
         const current = await this.load(key);
         await this.save(key, reduceEvents(current ?? original, current ? Object.values(original.events) : []));
       } else {
         await this.load(key);
       }
-      await writeOnce(path8.join(directory, "identity.json"), JSON.stringify({ key }));
-      for (const name of eventFiles(await names(path8.join(legacy, "outbox")))) {
-        const source = path8.join(legacy, "outbox", name);
-        await writeOnce(path8.join(directory, "outbox", name), await readFile5(source, "utf8"));
+      await writeOnce(path9.join(directory, "identity.json"), JSON.stringify({ key }));
+      for (const name of eventFiles(await names(path9.join(legacy, "outbox")))) {
+        const source = path9.join(legacy, "outbox", name);
+        await writeOnce(path9.join(directory, "outbox", name), await readFile6(source, "utf8"));
         await unlink(source);
       }
-      const backup = path8.join(home, "collector-backups", host, path8.basename(legacy));
+      const backup = path9.join(home, "collector-backups", host, path9.basename(legacy));
       const stateFiles = files.filter((name) => name === "state.json" || quarantined.includes(name));
       if (stateFiles.length > 0) {
         await mkdir(backup, { recursive: true, mode: 448 });
-        for (const name of stateFiles) await rename(path8.join(legacy, name), path8.join(backup, `${name}.${randomUUID()}.recovered`));
+        for (const name of stateFiles) await rename(path9.join(legacy, name), path9.join(backup, `${name}.${randomUUID()}.recovered`));
       }
-      if (eventFiles(await names(path8.join(legacy, "outbox"))).length === 0) {
-        await unlink(path8.join(legacy, "identity.json"));
+      if (eventFiles(await names(path9.join(legacy, "outbox"))).length === 0) {
+        await unlink(path9.join(legacy, "identity.json"));
       }
     },
     async enqueue(event3) {
       if (!HEX_HASH.test(event3.eventId)) throw new Error("invalid collector event id");
       const key = sessionKey(event3.agent, event3.nativeSessionId);
       const directory = await ensureDirectory(home, key);
-      await writeOnce(path8.join(directory, "identity.json"), JSON.stringify({ key }));
-      await writeOnce(path8.join(directory, "outbox", `${event3.eventId}.json`), JSON.stringify(event3));
+      await writeOnce(path9.join(directory, "identity.json"), JSON.stringify({ key }));
+      await writeOnce(path9.join(directory, "outbox", `${event3.eventId}.json`), JSON.stringify(event3));
     },
     async pending(key) {
-      const outbox = path8.join(collectorDirectory(home, key), "outbox");
+      const outbox = path9.join(collectorDirectory(home, key), "outbox");
       let names2;
       try {
         names2 = await readdir2(outbox);
@@ -2713,7 +2804,7 @@ function createJournal(home) {
       const events = [];
       for (const name of eventFiles(names2)) {
         try {
-          const event3 = JSON.parse(await readFile5(path8.join(outbox, name), "utf8"));
+          const event3 = JSON.parse(await readFile6(path9.join(outbox, name), "utf8"));
           if (validEvent(event3, key, name.slice(0, -5))) events.push(event3);
           else console.warn(`[timeline] unsupported or invalid outbox event preserved: ${name}`);
         } catch (error) {
@@ -2723,15 +2814,15 @@ function createJournal(home) {
       return events;
     },
     async load(key) {
-      const statePath = path8.join(collectorDirectory(home, key), "state.json");
+      const statePath = path9.join(collectorDirectory(home, key), "state.json");
       try {
-        return parseState(await readFile5(statePath, "utf8"), key);
+        return parseState(await readFile6(statePath, "utf8"), key);
       } catch (error) {
         if (error instanceof UnsupportedCollectorStateError) throw error;
         if (error.code === "ENOENT") {
-          const names2 = await readdir2(path8.dirname(statePath)).catch(() => []);
+          const names2 = await readdir2(path9.dirname(statePath)).catch(() => []);
           const corrupt = names2.find((name) => name.startsWith("state.json.") && name.endsWith(".corrupt"));
-          if (corrupt) throw new CorruptCollectorStateError(path8.join(path8.dirname(statePath), corrupt));
+          if (corrupt) throw new CorruptCollectorStateError(path9.join(path9.dirname(statePath), corrupt));
           return null;
         }
         const corruptPath = `${statePath}.${Date.now()}-${randomUUID()}.corrupt`;
@@ -2741,29 +2832,29 @@ function createJournal(home) {
     },
     async save(key, state) {
       const directory = await ensureDirectory(home, key);
-      await durableWrite(path8.join(directory, "state.json"), state);
+      await durableWrite(path9.join(directory, "state.json"), state);
     },
     async ack(key, eventIds) {
-      const outbox = path8.join(collectorDirectory(home, key), "outbox");
+      const outbox = path9.join(collectorDirectory(home, key), "outbox");
       await Promise.all(eventIds.filter((id) => HEX_HASH.test(id)).map(async (id) => {
-        await unlink(path8.join(outbox, `${id}.json`)).catch((error) => {
+        await unlink(path9.join(outbox, `${id}.json`)).catch((error) => {
           if (error.code !== "ENOENT") throw error;
         });
       }));
     },
     async keys() {
-      const root = path8.join(home, "collectors");
-      const directories = (await names(root)).filter((name) => HEX_HASH.test(name)).map((name) => path8.join(root, name));
+      const root = path9.join(home, "collectors");
+      const directories = (await names(root)).filter((name) => HEX_HASH.test(name)).map((name) => path9.join(root, name));
       for (const host of ["kimi", "zcode"]) {
-        directories.push(...(await names(path8.join(root, host))).filter((name) => HEX_HASH.test(name)).map((name) => path8.join(root, host, name)));
+        directories.push(...(await names(path9.join(root, host))).filter((name) => HEX_HASH.test(name)).map((name) => path9.join(root, host, name)));
       }
       const keys = /* @__PURE__ */ new Set();
       for (const base of directories) {
         try {
-          const identity = JSON.parse(await readFile5(path8.join(base, "identity.json"), "utf8"));
+          const identity = JSON.parse(await readFile6(path9.join(base, "identity.json"), "utf8"));
           if (typeof identity.key !== "string" || !hostOf(identity.key)) continue;
           if (base !== collectorDirectory(home, identity.key) && base !== legacyDirectory(home, identity.key)) continue;
-          if (eventFiles(await names(path8.join(base, "outbox"))).length > 0) keys.add(identity.key);
+          if (eventFiles(await names(path9.join(base, "outbox"))).length > 0) keys.add(identity.key);
         } catch (error) {
           if (error.code === "ENOENT") continue;
           console.warn(`[timeline] unreadable collector identity ${base}: ${String(error)}`);
@@ -2776,16 +2867,16 @@ function createJournal(home) {
 
 // src/shared/collectors/lock.ts
 import { createHash as createHash4, randomUUID as randomUUID2 } from "crypto";
-import { link as link2, mkdir as mkdir2, readFile as readFile6, unlink as unlink2, writeFile } from "fs/promises";
-import path9 from "path";
+import { link as link2, mkdir as mkdir2, readFile as readFile7, unlink as unlink2, writeFile } from "fs/promises";
+import path10 from "path";
 import { setTimeout as delay } from "timers/promises";
 function lockPath(home, key) {
-  return path9.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
+  return path10.join(home, "collectors", createHash4("sha256").update(key).digest("hex"), "lock");
 }
 async function readLock(filePath) {
   let raw;
   try {
-    raw = await readFile6(filePath, "utf8");
+    raw = await readFile7(filePath, "utf8");
   } catch (error) {
     return error.code === "ENOENT" ? { status: "missing" } : { status: "malformed" };
   }
@@ -2874,7 +2965,7 @@ async function acquireLock(filePath, deadline, depth = 0) {
 }
 async function withSessionLock(home, key, action, waitMs = 300) {
   const filePath = lockPath(home, key);
-  await mkdir2(path9.dirname(filePath), { recursive: true, mode: 448 });
+  await mkdir2(path10.dirname(filePath), { recursive: true, mode: 448 });
   const token = await acquireLock(filePath, Date.now() + waitMs);
   if (!token) return { acquired: false };
   try {
@@ -3045,7 +3136,7 @@ async function replayPending(deps) {
 
 // src/ingest.ts
 var cli = cac("ohmyc-timeline-ingest");
-cli.command("", "Ingest a single session into the timeline DB").option("--session-id <id>", "Session UUID (disk-path mode)").option("--transcript-path <path>", "Path to JSONL transcript (disk-path mode)").option("--agent-name <name>", "Agent name for disk-path mode", { default: "claude" }).option("--raw", "Read pre-parsed ParsedSessionData JSON from stdin").option("--hook <host>", "Read native cursor, grok, kimi, zcode, or auto hook JSON from stdin").option("--replay-pending", "Replay durable collector events").option("--detect-host", "Print cursor, grok, kimi, zcode, or legacy for hook JSON on stdin").action(async (options) => {
+cli.command("", "Ingest a single session into the timeline DB").option("--session-id <id>", "Session UUID (disk-path mode)").option("--transcript-path <path>", "Path to JSONL transcript (disk-path mode)").option("--agent-name <name>", "Agent name for disk-path mode", { default: "claude" }).option("--raw", "Read pre-parsed ParsedSessionData JSON from stdin").option("--hook <host>", "Read native cursor, grok, kimi, zcode, antigravity, or auto hook JSON from stdin").option("--replay-pending", "Replay durable collector events").option("--detect-host", "Print cursor, grok, kimi, zcode, or legacy for hook JSON on stdin").action(async (options) => {
   if (options.detectHost) {
     if (options.raw || options.hook || options.replayPending || options.sessionId || options.transcriptPath) {
       fail("--detect-host cannot be combined with a write mode");
@@ -3128,20 +3219,21 @@ async function readJsonStdin(mode) {
   }
 }
 function collectorHome() {
-  return process.env.OHMYC_HOME ?? path10.join(os3.homedir(), ".config", "ohmyc");
+  return process.env.OHMYC_HOME ?? path11.join(os4.homedir(), ".config", "ohmyc");
 }
 function grokHome() {
-  return process.env.GROK_HOME ?? path10.join(os3.homedir(), ".grok");
+  return process.env.GROK_HOME ?? path11.join(os4.homedir(), ".grok");
 }
 function hydrate(events) {
   const agent = events[0]?.agent;
   if (agent === "cursor") return hydrateCursor(events);
   if (agent === "grok") return hydrateGrok(events, grokHome());
-  if (agent === "kimi") return hydrateKimi(events, process.env.KIMI_CODE_HOME ?? path10.join(os3.homedir(), ".kimi-code"));
+  if (agent === "kimi") return hydrateKimi(events, process.env.KIMI_CODE_HOME ?? path11.join(os4.homedir(), ".kimi-code"));
   return Promise.resolve([]);
 }
 async function parseHook(host, input) {
   const observedAt = Date.now();
+  if (host === "antigravity") return parseAntigravityHook(input, observedAt);
   if (host === "zcode") return parseZcodeHook(input, observedAt);
   if (host === "kimi") return parseKimiHook(input, observedAt);
   return host === "cursor" ? parseCursorHook(input, observedAt) : parseGrokHook(input, observedAt);
@@ -3160,17 +3252,21 @@ async function withCollectorWriter(action) {
   }
 }
 async function runHookMode(requestedHost) {
-  if (!["cursor", "grok", "kimi", "zcode", "auto"].includes(requestedHost)) {
-    fail("--hook must be cursor, grok, kimi, zcode, or auto");
+  if (!["cursor", "grok", "kimi", "zcode", "antigravity", "auto"].includes(requestedHost)) {
+    fail("--hook must be cursor, grok, kimi, zcode, antigravity, or auto");
   }
   const input = await readJsonStdin("--hook");
   const host = requestedHost === "auto" ? detectHost(input, process.env) : requestedHost;
   if (!host) fail("unable to detect native hook host");
   const events = await parseHook(host, input);
-  if (events.length === 0) fail(`invalid ${host} hook payload`);
-  await withCollectorWriter(async (write) => {
-    await ingestEvents(events, { home: collectorHome(), hydrate, write });
-  });
+  if (events.length > 0) {
+    await withCollectorWriter(async (write) => {
+      await ingestEvents(events, { home: collectorHome(), hydrate, write });
+    });
+  } else if (host !== "antigravity") {
+    fail(`invalid ${host} hook payload`);
+  }
+  if (host === "antigravity") process.stdout.write("{}\n");
 }
 async function runReplayMode() {
   await withCollectorWriter(async (write) => {

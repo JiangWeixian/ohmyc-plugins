@@ -1,6 +1,6 @@
 import type { ParsedSessionData } from '@ohmyc/timeline/schema'
 
-export type Host = 'cursor' | 'grok' | 'kimi' | 'zcode'
+export type Host = 'cursor' | 'grok' | 'kimi' | 'zcode' | 'antigravity'
 
 export type Usage = {
   input: number
@@ -23,6 +23,7 @@ export type CollectorEvent = {
   turnId?: string
   prompt?: string
   confirmsTurn?: boolean
+  skills?: string[]
   tool?: {
     id: string
     name: string
