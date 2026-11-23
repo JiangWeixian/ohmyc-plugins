@@ -258,6 +258,20 @@ function normalizeMessages(messages) {
     return [{ info, parts }];
   });
 }
+function messageSkillNames(message) {
+  if (message.type === "skill")
+    return [message.name];
+  if (message.type === "user")
+    return message.skills?.map((skill) => skill.name) ?? [];
+  if (message.type !== "assistant")
+    return [];
+  return message.content.flatMap((part) => {
+    if (part.type !== "tool" || part.name !== "skill" || part.state.status !== "completed")
+      return [];
+    const input = part.state.input;
+    return input && typeof input === "object" && "id" in input && typeof input.id === "string" && input.id.trim() ? [input.id] : [];
+  });
+}
 function createOpenCodeV2Runtime(ctx, deps) {
   let tail = Promise.resolve();
   const compacting = new Set;
@@ -309,7 +323,7 @@ function createOpenCodeV2Runtime(ctx, deps) {
         messages.set(message.info.id, message);
       const skillMessages = new Map((previous?.skillMessages ?? []).filter((message) => retain(message.id)).map((message) => [message.id, message]));
       for (const message of context) {
-        const names = message.type === "skill" ? [message.name] : message.type === "user" ? message.skills?.map((skill) => skill.name) ?? [] : [];
+        const names = messageSkillNames(message);
         if (names.length)
           skillMessages.set(message.id, { id: message.id, names });
       }

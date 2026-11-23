@@ -1361,6 +1361,41 @@ var cac = (name = "") => new CAC(name);
 import os4 from "os";
 import path11 from "path";
 
+// src/agents/codex/skill.ts
+import { readFileSync as readFileSync2 } from "fs";
+function object2(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
+}
+function codexReadSkills(transcriptPath) {
+  let raw;
+  try {
+    raw = readFileSync2(transcriptPath, "utf8");
+  } catch {
+    return [];
+  }
+  const skills = /* @__PURE__ */ new Set();
+  for (const line of raw.split("\n")) {
+    if (!line.includes('"item_completed"')) continue;
+    let row;
+    try {
+      row = object2(JSON.parse(line));
+    } catch {
+      continue;
+    }
+    const payload = object2(row?.payload);
+    if (row?.type !== "event_msg" || payload?.type !== "item_completed") continue;
+    const item = object2(payload.item);
+    if (item?.type !== "CommandExecution" || item.status !== "completed" || item.exit_code !== 0 || !Array.isArray(item.parsed_cmd)) continue;
+    for (const command of item.parsed_cmd) {
+      const read = object2(command);
+      if (read?.type !== "read" || typeof read.path !== "string") continue;
+      const match = /(?:^|\/)skills\/([^/]+)\/SKILL\.md$/.exec(read.path);
+      if (match) skills.add(match[1]);
+    }
+  }
+  return [...skills];
+}
+
 // src/shared/collectors/skill.ts
 import path3 from "path";
 function skillFromReadPaths(input, output, cwd) {
@@ -1373,7 +1408,7 @@ function skillFromReadPaths(input, output, cwd) {
 }
 
 // src/agents/cursor/skill.ts
-function object2(value) {
+function object3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function cursorReadSkill(name, input, output, succeeded, cwd) {
@@ -1386,10 +1421,10 @@ function cursorReadSkill(name, input, output, succeeded, cwd) {
       return void 0;
     }
   }
-  const read = object2(result);
+  const read = object3(result);
   if (!read || read.is_error === true || read.isError === true) return void 0;
   if (typeof read.content_length !== "number" || !Number.isInteger(read.content_length) || read.content_length < 0) return void 0;
-  const requested = object2(input);
+  const requested = object3(input);
   return skillFromReadPaths(requested?.file_path ?? requested?.path, read.file_path, cwd);
 }
 
@@ -1441,7 +1476,7 @@ function detectHost(input, env) {
 }
 
 // src/agents/cursor/hooks.ts
-function object3(value) {
+function object4(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text(value) {
@@ -1469,7 +1504,7 @@ function createEvent(semantic, observedAt, identity) {
   };
 }
 function parseCursorHook(input, observedAt) {
-  const payload = object3(input);
+  const payload = object4(input);
   if (!payload || !Number.isFinite(observedAt)) return [];
   const nativeSessionId = text(payload.conversation_id);
   const hook = text(payload.hook_event_name);
@@ -1540,14 +1575,14 @@ function parseCursorHook(input, observedAt) {
 // src/agents/cursor/transcript.ts
 import { createHash as createHash2 } from "crypto";
 import { readFile, stat } from "fs/promises";
-function object4(value) {
+function object5(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function contentText(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
   return content.flatMap((block) => {
-    const value = object4(block);
+    const value = object5(block);
     return value?.type === "text" && typeof value.text === "string" ? [value.text] : [];
   }).join("\n");
 }
@@ -1555,6 +1590,11 @@ function nativeUserQuery(value) {
   const match = value.match(/<user_query>\s*([\s\S]*?)\s*<\/user_query>/);
   const query = match?.[1]?.trim();
   return query ? query : void 0;
+}
+function attachedSkillNames(content) {
+  const block = /^<manually_attached_skills>\r?\n([\s\S]*?)\r?\n<\/manually_attached_skills>/.exec(content);
+  if (!block) return [];
+  return [...block[1].matchAll(/^Skill Name: ([^\r\n]+)\r?\nPath: [^\r\n]+\/SKILL\.md\r?$/gm)].map((match) => match[1].trim()).filter(Boolean);
 }
 function event(semantic, observedAt) {
   return { ...semantic, eventId: eventKey(semantic), observedAt };
@@ -1582,7 +1622,7 @@ async function readTranscript(transcriptPath) {
   for (const [index, line] of lines.entries()) {
     if (!line.trim()) continue;
     try {
-      const value = object4(JSON.parse(line));
+      const value = object5(JSON.parse(line));
       if (value) parsed.push(value);
     } catch {
       if (index === lines.length - 1 && !hasTrailingNewline) {
@@ -1599,11 +1639,11 @@ async function readTranscript(transcriptPath) {
   let current;
   for (const row of parsed) {
     const role = typeof row.role === "string" ? row.role : void 0;
-    const message = object4(row.message);
+    const message = object5(row.message);
     const content = contentText(message?.content);
     const blocks = Array.isArray(message?.content) ? message.content : [];
     for (const block of blocks) {
-      const result = object4(block);
+      const result = object5(block);
       if (result?.type !== "tool_result" || typeof result.tool_use_id !== "string") continue;
       const pending = pendingTools.get(result.tool_use_id);
       if (!pending) continue;
@@ -1616,7 +1656,7 @@ async function readTranscript(transcriptPath) {
       if (skill) pending.tool.skill = skill;
       pendingTools.delete(result.tool_use_id);
     }
-    if (role === "user" && blocks.some((block) => object4(block)?.type === "tool_result")) continue;
+    if (role === "user" && blocks.some((block) => object5(block)?.type === "tool_result")) continue;
     if (role === "user") {
       const prompt = nativeUserQuery(content);
       if (!prompt) {
@@ -1625,13 +1665,13 @@ async function readTranscript(transcriptPath) {
       }
       const ordinal = occurrences.get(prompt) ?? 0;
       occurrences.set(prompt, ordinal + 1);
-      current = { prompt, ordinal, hasAssistantActivity: false, tools: [] };
+      current = { prompt, ordinal, hasAssistantActivity: false, skills: attachedSkillNames(content), tools: [] };
       turns.push(current);
     } else if (role === "assistant" && current) {
-      const hasTool = blocks.some((block) => object4(block)?.type === "tool_use");
+      const hasTool = blocks.some((block) => object5(block)?.type === "tool_use");
       if (content.trim() || hasTool) current.hasAssistantActivity = true;
       for (const block of blocks) {
-        const tool = object4(block);
+        const tool = object5(block);
         if (tool?.type === "tool_use" && typeof tool.id === "string" && tool.id.trim() && typeof tool.name === "string" && tool.name.trim()) {
           const collected = { id: tool.id, name: tool.name };
           current.tools.push(collected);
@@ -1665,15 +1705,15 @@ async function hydrateCursor(events) {
   ))];
   const loaded = /* @__PURE__ */ new Map();
   for (const transcriptPath of paths) {
-    const transcript = await readTranscript(transcriptPath);
-    if (transcript) loaded.set(transcriptPath, transcript);
+    const transcript2 = await readTranscript(transcriptPath);
+    if (transcript2) loaded.set(transcriptPath, transcript2);
   }
   const unresolvedContext = cursorEvents.some((item) => item.unresolvedParent) && !rootProven;
   const observedAt = Math.min(...cursorEvents.map((item) => item.observedAt));
   const exemplar = cursorEvents[0];
   const hookToolIds = new Set(cursorEvents.flatMap((item) => item.tool ? [item.tool.id] : []));
+  const transcript = loaded.values().next().value;
   if (!reliableHookTurns) {
-    const transcript = loaded.values().next().value;
     for (const turn of transcript?.turns ?? []) {
       if (!turn.hasAssistantActivity) continue;
       const id = turnId(turn.prompt, turn.ordinal);
@@ -1694,8 +1734,8 @@ async function hydrateCursor(events) {
       }
     }
   }
-  if (loaded.size > 0) {
-    const transcript = loaded.values().next().value;
+  if (transcript) {
+    const skills = [...new Set(transcript.turns.filter((turn) => turn.hasAssistantActivity).flatMap((turn) => turn.skills))];
     output.push(event({
       version: 1,
       agent: "cursor",
@@ -1704,13 +1744,14 @@ async function hydrateCursor(events) {
       model: exemplar.model,
       transcriptPath: exemplar.transcriptPath,
       fileSize: transcript.fileSize,
+      ...skills.length ? { skills } : {},
       usage: { input: 0, output: 0, cached: 0, status: "unavailable" },
       unresolvedParent: unresolvedContext ? true : void 0
     }, observedAt));
   }
   for (const request of requests) {
-    const transcript = request.transcriptPath ? loaded.get(request.transcriptPath) : void 0;
-    if (request.transcriptPath && !transcript?.complete) continue;
+    const transcript2 = request.transcriptPath ? loaded.get(request.transcriptPath) : void 0;
+    if (request.transcriptPath && !transcript2?.complete) continue;
     if (request.unresolvedParent && !rootProven) continue;
     output.push(event({
       ...withoutIdentity(request),
@@ -1733,15 +1774,38 @@ async function hydrateCursor(events) {
 }
 
 // src/agents/grok/skill.ts
-function object5(value) {
+function object6(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function grokReadSkill(name, input, output, succeeded, cwd) {
   if (!succeeded || name !== "read_file") return void 0;
-  const result = object5(output);
-  const content = object5(result?.FileContent);
+  const result = object6(output);
+  const content = object6(result?.FileContent);
   if (result?.type !== "ReadFile" || "FileNotFound" in result || result.is_error === true || result.isError === true || typeof content?.content !== "string") return void 0;
-  return skillFromReadPaths(object5(input)?.target_file, content.absolute_path, cwd);
+  return skillFromReadPaths(object6(input)?.target_file, content.absolute_path, cwd);
+}
+function grokAttachedSkills(history) {
+  const skills = /* @__PURE__ */ new Set();
+  for (const line of history.split("\n")) {
+    if (!line.includes("<skills_referenced>")) continue;
+    let row;
+    try {
+      row = object6(JSON.parse(line));
+    } catch {
+      continue;
+    }
+    if (row?.type !== "user" || !Array.isArray(row.content)) continue;
+    for (const block of row.content) {
+      const value = object6(block);
+      if (value?.type !== "text" || typeof value.text !== "string") continue;
+      const references = /^<user_query>\r?\n[\s\S]*?\r?\n<\/user_query>\r?\n<skill_information>\r?\n<skills_referenced>\r?\n([\s\S]*?)\r?\n<\/skills_referenced>/.exec(value.text);
+      if (!references) continue;
+      for (const match of references[1].matchAll(/^<skill name="([^"\r\n]+)" path="[^"\r\n]+\/SKILL\.md"\s*\/>$/gm)) {
+        skills.add(match[1]);
+      }
+    }
+  }
+  return [...skills];
 }
 
 // src/agents/grok/hooks.ts
@@ -1765,7 +1829,7 @@ var confirms = /* @__PURE__ */ new Set([
   "stop_failure",
   "stop_cancelled"
 ]);
-function object6(value) {
+function object7(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text2(value) {
@@ -1784,7 +1848,7 @@ function createEvent2(semantic, observedAt, identity = {}) {
   };
 }
 function parseGrokHook(input, observedAt) {
-  const payload = object6(input);
+  const payload = object7(input);
   if (!payload || !Number.isFinite(observedAt)) return [];
   const nativeSessionId = text2(payload.sessionId);
   const nativeHook = text2(payload.hookEventName);
@@ -1864,7 +1928,7 @@ function parseGrokHook(input, observedAt) {
 // src/agents/grok/session.ts
 import { readdir, readFile as readFile2, stat as stat2 } from "fs/promises";
 import path5 from "path";
-function object7(value) {
+function object8(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function text3(value) {
@@ -1886,8 +1950,8 @@ function withoutIdentity2(source) {
   return semantic;
 }
 function parseGrokUsage(input, nativeSessionId) {
-  const payload = object7(input);
-  const session = object7(payload?.session);
+  const payload = object8(input);
+  const session = object8(payload?.session);
   if (text3(payload?.sessionId) !== nativeSessionId || !session) return null;
   const inputTokens = session.inputTokens;
   const outputTokens = session.outputTokens;
@@ -1916,11 +1980,11 @@ async function stableRead(filePath) {
 function parseSummary(file, expectedId) {
   let payload;
   try {
-    payload = object7(JSON.parse(file.raw));
+    payload = object8(JSON.parse(file.raw));
   } catch {
     return null;
   }
-  const info = object7(payload?.info);
+  const info = object8(payload?.info);
   if (text3(info?.id) !== expectedId) return null;
   if (payload?.chat_format_version !== 1) {
     console.warn("[timeline] unsupported Grok chat format");
@@ -1994,7 +2058,7 @@ async function readUsage(summary) {
   if (!summaryAfter || summaryAfter.size !== summary.fileSize || summaryAfter.mtimeMs !== summary.mtimeMs) return null;
   return {
     usage,
-    sourceAt: timestamp(object7(payload)?.updatedAt),
+    sourceAt: timestamp(object8(payload)?.updatedAt),
     fileSize: file.size
   };
 }
@@ -2039,7 +2103,7 @@ async function findParent(child, grokHome2) {
       if (!metaFile) continue;
       let meta;
       try {
-        meta = object7(JSON.parse(metaFile.raw));
+        meta = object8(JSON.parse(metaFile.raw));
       } catch {
         continue;
       }
@@ -2106,6 +2170,16 @@ async function hydrateGrok(events, grokHome2) {
   }
   const usage = await readUsage(summary);
   const output = [metadataEvent(summary, usage, exemplar)];
+  if (grokEvents.some((item) => item.prompt?.trimStart().startsWith("/"))) {
+    const history = await stableRead(path5.join(summary.directory, "chat_history.jsonl"));
+    const skills = grokAttachedSkills(history?.raw ?? "");
+    if (skills.length) output.push(event2({
+      version: 1,
+      agent: "grok",
+      nativeSessionId: summary.id,
+      skills
+    }, exemplar.observedAt));
+  }
   if (!usage || usage.usage.status === "partial") return output;
   for (const request of requests) {
     if (request.turnId && request.sourceAt !== void 0 && usage.sourceAt !== void 0 && usage.sourceAt < request.sourceAt) continue;
@@ -2126,7 +2200,7 @@ async function hydrateGrok(events, grokHome2) {
 
 // src/agents/zcode/hooks.ts
 import { readFile as readFile3 } from "fs/promises";
-function object8(value) {
+function object9(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function text4(value) {
@@ -2138,10 +2212,10 @@ async function transcriptPrompt(file) {
     const raw = await readFile3(file, "utf8");
     for (const line of raw.split("\n")) {
       if (!line.trim()) continue;
-      const message = object8(object8(JSON.parse(line))?.message);
+      const message = object9(object9(JSON.parse(line))?.message);
       if (message?.role !== "user" || !Array.isArray(message.content)) continue;
       const prompt = message.content.map((block) => {
-        const data = object8(block);
+        const data = object9(block);
         return data?.type === "text" ? text4(data.text) ?? "" : "";
       }).join("\n");
       if (prompt.trim()) return prompt;
@@ -2152,7 +2226,7 @@ async function transcriptPrompt(file) {
   return void 0;
 }
 async function parseZcodeHook(input, observedAt) {
-  const data = object8(input);
+  const data = object9(input);
   const id = text4(data?.sessionId);
   const hook = text4(data?.hookEventName);
   if (!data || !id || !hook || !Number.isFinite(observedAt) || data.session_id !== void 0 && data.session_id !== id || data.hook_event_name !== void 0 && data.hook_event_name !== hook) return [];
@@ -2184,11 +2258,11 @@ async function parseZcodeHook(input, observedAt) {
   if (!toolId || !name) return [];
   let skill;
   if (hook === "PostToolUse" && data.error === void 0 && data.toolResponse !== void 0) {
-    const args = object8(data.toolInput);
+    const args = object9(data.toolInput);
     if (name === "Skill") skill = text4(args?.skill);
     const requested = text4(args?.file_path);
     const cwd = text4(data.cwd);
-    if (name === "Read") skill = skillFromReadPaths(requested, object8(data.toolResponse)?.filePath, cwd);
+    if (name === "Read") skill = skillFromReadPaths(requested, object9(data.toolResponse)?.filePath, cwd);
   }
   return [
     makeEvent({ turnId: turnId3, confirmsTurn: true }),
@@ -2198,7 +2272,7 @@ async function parseZcodeHook(input, observedAt) {
 
 // src/agents/kimi/hooks.ts
 import path6 from "path";
-function object9(value) {
+function object10(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : void 0;
 }
 function text5(value) {
@@ -2213,14 +2287,14 @@ function kimiEvent(id, observedAt, facts, identity = {}) {
 }
 function kimiSkill(name, input, succeeded, cwd) {
   if (!succeeded) return void 0;
-  const args = object9(input);
+  const args = object10(input);
   if (name === "Skill") return text5(args?.skill);
   const requested = text5(args?.path);
   if (name !== "Read" || !requested || !path6.isAbsolute(requested) && !cwd) return void 0;
   return skillFromReadPaths(requested, path6.resolve(cwd ?? "/", requested), cwd);
 }
 function parseKimiHook(input, observedAt) {
-  const data = object9(input);
+  const data = object10(input);
   const id = text5(data?.session_id);
   const hook = text5(data?.hook_event_name);
   if (!data || !id || !hook || data.client_type !== "kimi_code_cli" || !Number.isFinite(observedAt)) return [];
@@ -2262,7 +2336,7 @@ function parseKimiWire(raw, id, observedAt, cwd, since) {
   for (const source of raw.split("\n")) {
     if (!source.trim()) continue;
     try {
-      const data = object9(JSON.parse(source));
+      const data = object10(JSON.parse(source));
       if (!data) partial = true;
       else records.push(data);
     } catch {
@@ -2291,9 +2365,9 @@ function parseKimiWire(raw, id, observedAt, cwd, since) {
     if (since !== void 0 && data.type !== "config.update" && (sourceAt === void 0 || sourceAt < since)) continue;
     if (data.type === "turn.prompt") {
       const nativeTurn = turnId2(data.turnId);
-      const origin = object9(data.origin);
+      const origin = object10(data.origin);
       const prompt = Array.isArray(data.input) ? data.input.map((part) => {
-        const value = object9(part);
+        const value = object10(part);
         return value?.type === "text" ? text5(value.text) ?? "" : "";
       }).join("") : "";
       if (origin?.kind === "user" && nativeTurn !== void 0 && prompt.trim()) {
@@ -2301,13 +2375,13 @@ function parseKimiWire(raw, id, observedAt, cwd, since) {
       }
     }
     if (data.type === "context.append_loop_event") {
-      const native = object9(data.event);
+      const native = object10(data.event);
       const callId = text5(native?.toolCallId);
       const name = text5(native?.name);
       if (native?.type === "tool.call" && callId && name) calls.set(callId, { name, args: native.args });
       if (native?.type === "tool.result" && callId) {
         const call = calls.get(callId);
-        const result = object9(native.result);
+        const result = object10(native.result);
         if (call && result) {
           const skill = kimiSkill(call.name, call.args, result.isError !== true && result.truncated !== true, project2);
           events.push(kimiEvent(id, observedAt, { sourceAt, tool: { id: callId, name: call.name, ...skill ? { skill } : {} } }));
@@ -2315,7 +2389,7 @@ function parseKimiWire(raw, id, observedAt, cwd, since) {
       }
     }
     if (data.type === "usage.record") {
-      const usage = object9(data.usage);
+      const usage = object10(data.usage);
       const values = [usage?.inputOther, usage?.inputCacheCreation, usage?.inputCacheRead, usage?.output];
       if (!values.every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0)) {
         partial = true;
@@ -2359,7 +2433,7 @@ async function hydrateKimi(events, home) {
   let entry;
   for (const line of index.raw.split("\n")) {
     try {
-      const value = object9(JSON.parse(line));
+      const value = object10(JSON.parse(line));
       if (value?.sessionId === id) entry = value;
     } catch {
     }
@@ -2378,7 +2452,7 @@ async function hydrateKimi(events, home) {
   if (!wire || !state) return [];
   let metadata;
   try {
-    metadata = object9(JSON.parse(state.raw));
+    metadata = object10(JSON.parse(state.raw));
   } catch {
     return [];
   }
@@ -2396,7 +2470,7 @@ async function hydrateKimi(events, home) {
   const enriched = parsed.map((event3, index2) => {
     if (index2 !== parsed.length - 1) return event3;
     const { eventId: _eventId, observedAt: _observedAt, ...facts } = event3;
-    const agents = object9(metadata.agents);
+    const agents = object10(metadata.agents);
     const hasChildren = agents && Object.keys(agents).some((agent) => agent !== "main");
     return kimiEvent(id, observedAt, {
       ...facts,
@@ -3174,10 +3248,16 @@ cli.parse();
 async function runDiskMode(sessionId, transcriptPath, agentName) {
   const db = openDatabase();
   try {
-    createWriter(db).writeSession(parseTranscript(sessionId, transcriptPath, { agentName }));
+    const parsed = parseTranscript(sessionId, transcriptPath, { agentName });
+    if (agentName === "codex") addCodexReadSkills(parsed);
+    createWriter(db).writeSession(parsed);
   } finally {
     closeDatabase(db);
   }
+}
+function addCodexReadSkills(data) {
+  const skills = codexReadSkills(data.transcriptPath);
+  if (skills.length) data.skills = [.../* @__PURE__ */ new Set([...data.skills ?? [], ...skills])];
 }
 var transcriptUsageAgents = /* @__PURE__ */ new Set(["claude", "claude-cli", "codex"]);
 function applyTranscriptUsage(data) {
@@ -3189,6 +3269,7 @@ function applyTranscriptUsage(data) {
     data.tokensOutput = parsed.tokensOutput;
     data.tokensCached = parsed.tokensCached;
     data.usageDetails = parsed.usageDetails;
+    if (agentName === "codex") addCodexReadSkills(data);
   } catch {
     data.usageDetails = { events: [], status: "unavailable" };
   }

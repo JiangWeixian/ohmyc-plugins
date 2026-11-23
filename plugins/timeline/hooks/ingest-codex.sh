@@ -137,7 +137,7 @@ if command -v jq >/dev/null 2>&1; then
   set -e
 
   if [ $JQ_STATUS -eq 0 ] && [ -n "$EXTRACTED" ] && [ "$EXTRACTED" != "null" ]; then
-    echo "$EXTRACTED" | node --no-warnings "$INGEST_MJS" --raw && exit 0
+    printf '%s\n' "$EXTRACTED" | node --no-warnings "$INGEST_MJS" --raw && exit 0
     log_error "Codex jq fast path failed for $SESSION_ID, falling back to slow path"
   else
     log_error "Codex jq extraction failed for $SESSION_ID, falling back to slow path"
